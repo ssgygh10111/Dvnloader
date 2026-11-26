@@ -142,11 +142,31 @@ static NSString *DVAfter(NSString *line, NSString *prefix) {
 
 #pragma mark - Network
 
+// Own session with only Apple's URL protocols, so other tweaks in the app
+// (ad-block proxies etc.) can't rewrite or reroute our requests.
++ (NSURLSession *)session {
+    static NSURLSession *s;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSURLSessionConfiguration *c = [NSURLSessionConfiguration ephemeralSessionConfiguration];
+        NSMutableArray *keep = [NSMutableArray array];
+        for (Class cls in c.protocolClasses) {
+            NSString *n = NSStringFromClass(cls);
+            if ([n hasPrefix:@"NS"] || [n hasPrefix:@"_NS"] || [n hasPrefix:@"__NS"]) [keep addObject:cls];
+        }
+        c.protocolClasses = keep;
+        c.HTTPMaximumConnectionsPerHost = 8;
+        c.HTTPAdditionalHeaders = @{@"User-Agent": @"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"};
+        s = [NSURLSession sessionWithConfiguration:c];
+    });
+    return s;
+}
+
 + (NSData *)fetch:(NSURLRequest *)req error:(NSError **)err {
     __block NSData *data = nil;
     __block NSError *error = nil;
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
-    [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *d, NSURLResponse *resp, NSError *e) {
+    [[[self session] dataTaskWithRequest:req completionHandler:^(NSData *d, NSURLResponse *resp, NSError *e) {
         NSInteger code = [resp isKindOfClass:NSHTTPURLResponse.class] ? ((NSHTTPURLResponse *)resp).statusCode : 0;
         if (!e && code >= 400) {
             e = [NSError errorWithDomain:@"Dvnloader" code:code
@@ -189,7 +209,10 @@ static NSString *DVAfter(NSString *line, NSString *prefix) {
     NSDictionary *data = [json isKindOfClass:NSDictionary.class] ? json[@"data"] : nil;
     id tok = data[live ? @"streamPlaybackAccessToken" : @"videoPlaybackAccessToken"];
     if (![tok isKindOfClass:NSDictionary.class] || ![tok[@"value"] isKindOfClass:NSString.class]) {
-        if (err) *err = DVError(live ? @"القناة مو لايف الحين" : @"ما لقيت هالبث، يمكن انحذف");
+        NSString *raw = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] ?: @"";
+        if (raw.length > 160) raw = [raw substringToIndex:160];
+        NSString *msg = live ? @"القناة مو لايف الحين" : @"ما لقيت هالبث، يمكن انحذف";
+        if (err) *err = DVError([NSString stringWithFormat:@"%@\n\n(%@ • %@)", msg, ident, raw]);
         return nil;
     }
     return tok;
@@ -210,9 +233,10 @@ static NSString *DVAfter(NSString *line, NSString *prefix) {
     NSError *e = nil;
     NSData *d = [self fetch:[NSURLRequest requestWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:20] error:&e];
     if (!d) {
-        if (err) *err = (e.code == 403)
-            ? DVError(@"هالبث للمشتركين بس، ما يتنزل")
-            : (kind == DVKindLive && e.code == 404 ? DVError(@"القناة مو لايف الحين") : e);
+        NSString *msg = (e.code == 403) ? @"هالبث للمشتركين بس، ما يتنزل"
+                      : (kind == DVKindLive && e.code == 404) ? @"القناة مو لايف الحين"
+                      : (e.localizedDescription ?: @"صار خطأ");
+        if (err) *err = DVError([NSString stringWithFormat:@"%@\n\n(%@ • usher %ld)", msg, ident, (long)e.code]);
         return nil;
     }
     NSString *text = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
