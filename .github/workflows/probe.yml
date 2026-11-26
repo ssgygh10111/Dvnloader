@@ -18,4 +18,11 @@ jobs:
           SIG=$(echo "$R" | jq -r '.data.streamPlaybackAccessToken.signature')
           TOK=$(echo "$R" | jq -r '.data.streamPlaybackAccessToken.value')
           CODE=$(curl -s -o m.m3u8 -w '%{http_code}' -G "https://usher.ttvnw.net/api/channel/hls/$CH.m3u8" --data-urlencode "sig=$SIG" --data-urlencode "token=$TOK" -d allow_source=true -d allow_audio_only=true -d player=twitchweb -d playlist_include_framerate=true -d supported_codecs=avc1 -d p=12345)
-          echo "::notice title=usher $CODE::$(head -c 700 m.m3u8 | tr '\n' ' ')"
+          echo "::notice title=usher $CODE::$(grep -v '^#EXT-X-TWITCH-INFO' m.m3u8 | head -c 900 | tr '\n' ' ')"
+          V=$(grep -v '^#' m.m3u8 | head -1)
+          curl -s "$V" -o v.m3u8
+          echo "::notice title=media head::$(head -c 1500 v.m3u8 | tr '\n' ' ')"
+          echo "::notice title=media tail::$(tail -c 1200 v.m3u8 | tr '\n' ' ')"
+          S=$(grep -v '^#' v.m3u8 | tail -1)
+          C2=$(curl -s -o seg.bin -w '%{http_code} %{size_download} %{content_type}' "$S")
+          echo "::notice title=segment::$C2 $(head -c 16 seg.bin | xxd -p)"
