@@ -191,8 +191,8 @@ static NSString *DVAfter(NSString *line, NSString *prefix) {
         @"operationName": @"PlaybackAccessToken_Template",
         @"query": q,
         @"variables": @{
-            @"isLive": @(live), @"login": live ? ident : @"",
-            @"isVod": @(!live), @"vodID": live ? @"" : ident,
+            @"isLive": (live ? @YES : @NO), @"login": live ? ident : @"",
+            @"isVod": (live ? @NO : @YES), @"vodID": live ? @"" : ident,
             @"playerType": @"site",
         },
     };
