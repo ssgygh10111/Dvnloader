@@ -19,8 +19,14 @@ static const int kAACRates[] = {96000, 88200, 64000, 48000, 44100, 32000, 24000,
     int pmtPID, videoPID, audioPID;
     BOOL hevc;
     NSMutableData *vPES, *aPES;
-    NSMutableData *vAU;      // access unit being assembled (may span several PES packets)
-    int64_t vAUpts, vAUdts;
+    // Annex-B video byte stream; frames are cut on H.264 boundaries, not PES boundaries,
+    // because Twitch spreads a frame's tail into the next PES packet.
+    NSMutableData *vES;
+    uint64_t vESBase;                 // stream offset of vES[0]
+    NSMutableArray<NSArray *> *marks; // @[streamOffset, pts, dts] for each PES start
+    NSMutableData *au;
+    BOOL auSlice, auKey;
+    int64_t auPTS, auDTS;
 
     // scan results
     NSData *sps, *pps;
@@ -107,30 +113,7 @@ static size_t DVNextStart(const uint8_t *p, size_t len, size_t from) {
     return len;
 }
 
-static void DVVideoAU(DVRemuxState *s, const uint8_t *p, size_t len, int64_t pts, int64_t dts) {
-    NSMutableData *avcc = [NSMutableData data];
-    BOOL key = NO;
-    size_t pos = DVNextStart(p, len, 0);
-    while (pos < len) {
-        size_t start = pos + 3;
-        size_t next = DVNextStart(p, len, start);
-        const uint8_t *nal = p + start;
-        size_t nlen = next > start ? next - start : 0;
-        while (nlen && nal[nlen - 1] == 0) nlen--; // drop the leading 0 of a 4-byte start code
-        if (nlen) {
-            int type = nal[0] & 0x1F;
-            if (type == 7) { if (s->scanning && !s->sps) s->sps = [NSData dataWithBytes:nal length:nlen]; }
-            else if (type == 8) { if (s->scanning && !s->pps) s->pps = [NSData dataWithBytes:nal length:nlen]; }
-            else if (type != 9) {
-                if (type == 5) key = YES;
-                uint32_t be = CFSwapInt32HostToBig((uint32_t)nlen);
-                [avcc appendBytes:&be length:4];
-                [avcc appendBytes:nal length:nlen];
-            }
-        }
-        pos = next;
-    }
-
+static void DVEmitAU(DVRemuxState *s, NSData *avcc, BOOL key, int64_t pts, int64_t dts) {
     if (s->scanning) {
         if (s->firstPTS < 0 || pts < s->firstPTS) s->firstPTS = pts;
         return;
@@ -187,9 +170,63 @@ static void DVAudioPES(DVRemuxState *s, const uint8_t *p, size_t len, int64_t pt
     }
 }
 
-static void DVFlushAU(DVRemuxState *s) {
-    if (s->vAU.length && s->vAUpts >= 0) DVVideoAU(s, s->vAU.bytes, s->vAU.length, s->vAUpts, s->vAUdts);
-    s->vAU.length = 0;
+static void DVFinishAU(DVRemuxState *s) {
+    if (s->auSlice && s->au.length && s->auPTS >= 0) DVEmitAU(s, s->au, s->auKey, s->auPTS, s->auDTS);
+    s->au = [NSMutableData data];
+    s->auSlice = s->auKey = NO;
+    s->auPTS = s->auDTS = -1;
+}
+
+static void DVStampAU(DVRemuxState *s, uint64_t at) {
+    // timestamps of the PES packet this frame starts in
+    NSArray *best = nil;
+    for (NSArray *m in s->marks) {
+        if ([m[0] unsignedLongLongValue] <= at) best = m; else break;
+    }
+    if (best) { s->auPTS = [best[1] longLongValue]; s->auDTS = [best[2] longLongValue]; }
+    // forget marks that can no longer be needed
+    while (s->marks.count > 1 && [s->marks[1][0] unsignedLongLongValue] <= at) [s->marks removeObjectAtIndex:0];
+}
+
+static void DVHandleNAL(DVRemuxState *s, const uint8_t *nal, size_t nlen, uint64_t at) {
+    while (nlen && nal[nlen - 1] == 0) nlen--; // trailing zero of a 4-byte start code
+    if (!nlen) return;
+    int type = nal[0] & 0x1F;
+    BOOL isSlice = (type == 1 || type == 5);
+    BOOL firstSlice = isSlice && nlen > 1 && (nal[1] & 0x80); // first_mb_in_slice == 0
+    BOOL startsAU = type == 9 || (s->auSlice && (type == 7 || type == 8 || type == 6 || firstSlice));
+    if (startsAU || !s->au) DVFinishAU(s);
+    if (s->auPTS < 0) DVStampAU(s, at);
+
+    if (type == 7) { if (s->scanning && !s->sps) s->sps = [NSData dataWithBytes:nal length:nlen]; return; }
+    if (type == 8) { if (s->scanning && !s->pps) s->pps = [NSData dataWithBytes:nal length:nlen]; return; }
+    if (type == 9) return;
+    if (isSlice) s->auSlice = YES;
+    if (type == 5) s->auKey = YES;
+    uint32_t be = CFSwapInt32HostToBig((uint32_t)nlen);
+    [s->au appendBytes:&be length:4];
+    [s->au appendBytes:nal length:nlen];
+}
+
+// Pull out every NAL that is followed by another start code.
+static void DVScanES(DVRemuxState *s, BOOL final) {
+    const uint8_t *p = s->vES.bytes;
+    size_t len = s->vES.length;
+    size_t pos = DVNextStart(p, len, 0);
+    size_t consumed = pos < len ? pos : (len > 3 ? len - 3 : 0);
+    while (pos < len) {
+        size_t start = pos + 3;
+        size_t next = DVNextStart(p, len, start);
+        if (next >= len && !final) break; // NAL not complete yet
+        DVHandleNAL(s, p + start, (next > start ? next : start) - start, s->vESBase + pos);
+        consumed = next;
+        pos = next;
+    }
+    if (consumed) {
+        [s->vES replaceBytesInRange:NSMakeRange(0, consumed) withBytes:NULL length:0];
+        s->vESBase += consumed;
+    }
+    if (final) DVFinishAU(s);
 }
 
 static void DVFlushPES(DVRemuxState *s, NSMutableData *pes, BOOL video) {
@@ -206,13 +243,9 @@ static void DVFlushPES(DVRemuxState *s, NSMutableData *pes, BOOL video) {
     const uint8_t *es = b + 9 + hlen;
     size_t elen = pes.length - 9 - hlen;
     if (video) {
-        // A frame can be split over several PES packets; only the first carries timestamps.
-        if (pts >= 0) {
-            DVFlushAU(s);
-            s->vAUpts = pts;
-            s->vAUdts = dts;
-        }
-        if (s->vAUpts >= 0) [s->vAU appendBytes:es length:elen];
+        if (pts >= 0) [s->marks addObject:@[@(s->vESBase + s->vES.length), @(pts), @(dts)]];
+        [s->vES appendBytes:es length:elen];
+        DVScanES(s, NO);
     } else if (pts >= 0) {
         DVAudioPES(s, es, elen, pts);
     }
@@ -276,8 +309,12 @@ static BOOL DVRunPass(DVRemuxState *s, NSURL *src, unsigned long long limit) {
     if (!fh) return NO;
     s->vPES = [NSMutableData data];
     s->aPES = [NSMutableData data];
-    s->vAU = [NSMutableData data];
-    s->vAUpts = s->vAUdts = -1;
+    s->vES = [NSMutableData data];
+    s->vESBase = 0;
+    s->marks = [NSMutableArray array];
+    s->au = nil;
+    s->auSlice = s->auKey = NO;
+    s->auPTS = s->auDTS = -1;
     unsigned long long readTotal = 0;
     NSMutableData *carry = [NSMutableData data];
     while (1) {
@@ -301,7 +338,7 @@ static BOOL DVRunPass(DVRemuxState *s, NSURL *src, unsigned long long limit) {
     }
     [fh closeFile];
     DVFlushPES(s, s->vPES, YES);
-    DVFlushAU(s);
+    DVScanES(s, YES);
     DVFlushPES(s, s->aPES, NO);
     return YES;
 }
