@@ -10,6 +10,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-latest
@@ -54,3 +57,13 @@ jobs:
         with:
           name: Dvnloader
           path: out/
+
+      - name: Publish release (direct download, no login)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.ipa_url != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="build-${{ github.run_number }}"
+          gh release create "$TAG" out/Twitch-Dvnloader.ipa \
+            --repo "${{ github.repository }}" \
+            --title "Twitch + Dvnloader ($TAG)" --notes "Twitch IPA with Dvnloader injected." --latest
