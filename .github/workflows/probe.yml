@@ -1,0 +1,21 @@
+name: Probe Twitch API
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        default: "rin_ad"
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          CH: ${{ inputs.channel }}
+        run: |
+          Q='query PlaybackAccessToken_Template($login: String!, $isLive: Boolean!, $vodID: ID!, $isVod: Boolean!, $playerType: String!) { streamPlaybackAccessToken(channelName: $login, params: {platform: "web", playerBackend: "mediaplayer", playerType: $playerType}) @include(if: $isLive) { value signature } videoPlaybackAccessToken(id: $vodID, params: {platform: "web", playerBackend: "mediaplayer", playerType: $playerType}) @include(if: $isVod) { value signature } }'
+          BODY=$(jq -nc --arg q "$Q" --arg l "$CH" '{operationName:"PlaybackAccessToken_Template",query:$q,variables:{isLive:true,login:$l,isVod:false,vodID:"",playerType:"site"}}')
+          R=$(curl -s -H "Client-ID: kimne78kx3ncx6brgo4mv6wki5h1ko" -H "Content-Type: application/json" -d "$BODY" https://gql.twitch.tv/gql)
+          echo "::notice title=gql::$(echo "$R" | head -c 600)"
+          SIG=$(echo "$R" | jq -r '.data.streamPlaybackAccessToken.signature')
+          TOK=$(echo "$R" | jq -r '.data.streamPlaybackAccessToken.value')
+          CODE=$(curl -s -o m.m3u8 -w '%{http_code}' -G "https://usher.ttvnw.net/api/channel/hls/$CH.m3u8" --data-urlencode "sig=$SIG" --data-urlencode "token=$TOK" -d allow_source=true -d allow_audio_only=true -d player=twitchweb -d playlist_include_framerate=true -d supported_codecs=avc1 -d p=12345)
+          echo "::notice title=usher $CODE::$(head -c 700 m.m3u8 | tr '\n' ' ')"
