@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build test tool
-        run: clang -fobjc-arc -ISources Sources/DVRemuxer.m test/main.m -framework Foundation -framework AVFoundation -framework CoreMedia -framework AudioToolbox -framework CoreGraphics -o remux 2>&1 | tail -30
+        run: clang -fobjc-arc -ISources Sources/DVRemuxer.m test/main.m -framework Foundation -framework AVFoundation -framework CoreMedia -framework AudioToolbox -framework CoreGraphics -framework CoreVideo -o remux 2>&1 | tail -30
       - name: Fetch a real Twitch VOD (TS) and remux
         env:
           VOD: ${{ inputs.vod }}
