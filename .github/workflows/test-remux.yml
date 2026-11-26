@@ -32,3 +32,13 @@ jobs:
           ls -la in.ts
           ./remux in.ts out.mp4 | tee result.txt
           echo "::notice title=remux::$(cat result.txt | tr '\n' ' | ')"
+          brew install ffmpeg >/dev/null 2>&1 || true
+          echo "::notice title=src probe::$(ffprobe -v error -show_entries stream=codec_name,profile,width,height,r_frame_rate,sample_rate,channels -of compact in.ts | tr '\n' ' ')"
+          echo "::notice title=out probe::$(ffprobe -v error -show_entries stream=codec_name,profile,width,height,nb_frames -of compact out.mp4 | tr '\n' ' ')"
+          echo "::notice title=src decode::$(ffmpeg -v error -i in.ts -f null - 2>&1 | head -c 600 | tr '\n' ' ')"
+          echo "::notice title=out decode::$(ffmpeg -v error -i out.mp4 -f null - 2>&1 | head -c 800 | tr '\n' ' ')"
+          ffmpeg -v error -i in.ts -c copy ref.mp4 && ./remux in.ts out2.mp4 >/dev/null
+          echo "::notice title=ffmpeg-ref::$(ffprobe -v error -show_entries stream=codec_name,nb_frames,start_time,duration -of compact ref.mp4 | tr '\n' ' ')"
+          echo "::notice title=ours::$(ffprobe -v error -show_entries stream=codec_name,nb_frames,start_time,duration -of compact out.mp4 | tr '\n' ' ')"
+          echo "::notice title=pkts::$(ffprobe -v error -select_streams v -show_entries packet=pts,dts,flags,size -of csv out.mp4 | head -8 | tr '\n' ' ')"
+          echo "::notice title=refpkts::$(ffprobe -v error -select_streams v -show_entries packet=pts,dts,flags,size -of csv ref.mp4 | head -8 | tr '\n' ' ')"

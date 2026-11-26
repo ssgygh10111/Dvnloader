@@ -17,6 +17,15 @@ int main(int argc, char **argv) {
         NSError *ie = nil;
         CGImageRef img = [g copyCGImageAtTime:CMTimeMake(3, 1) actualTime:NULL error:&ie];
         printf("frame@3s=%s %s\n", img ? "ok" : "FAIL", ie.localizedDescription.UTF8String ?: "");
+        AVAssetTrack *vt = [a tracksWithMediaType:AVMediaTypeVideo].firstObject;
+        if (vt) {
+            AVAssetReader *r = [AVAssetReader assetReaderWithAsset:a error:nil];
+            AVAssetReaderTrackOutput *o = [AVAssetReaderTrackOutput assetReaderTrackOutputWithTrack:vt outputSettings:@{(id)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)}];
+            [r addOutput:o]; [r startReading];
+            int n = 0; CMSampleBufferRef sb;
+            while ((sb = [o copyNextSampleBuffer])) { n++; CFRelease(sb); }
+            printf("video decoded frames=%d status=%ld err=%s\n", n, (long)r.status, r.error.localizedDescription.UTF8String ?: "-");
+        }
         // decode audio to be sure the AAC track is valid
         AVAssetTrack *at = [a tracksWithMediaType:AVMediaTypeAudio].firstObject;
         if (at) {
