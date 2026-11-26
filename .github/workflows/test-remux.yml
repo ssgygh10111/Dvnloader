@@ -61,7 +61,7 @@ jobs:
           MAP=$(grep -o 'EXT-X-MAP:URI="[^"]*"' lv.m3u8 | head -1 | sed 's/EXT-X-MAP:URI="//; s/"$//')
           : > live.bin
           if [ -n "$MAP" ]; then curl -s "$MAP" >> live.bin; EXT=mp4; else EXT=ts; fi
-          for s in $(grep -B1 -v '^#' lv.m3u8 | grep -A1 'live$' | grep -v '^#' | grep -v '^--' | tail -5); do curl -s "$s" >> live.bin; done
+          for s in $(awk '/^#EXTINF/{getline; print}' lv.m3u8 | tail -5); do curl -s "$s" >> live.bin; done
           mv live.bin live.$EXT; ls -la live.$EXT
           if [ "$EXT" = mp4 ]; then OUT=$(./fmp4 live.mp4 live-out.mp4); else OUT=$(./remux live.ts live-out.mp4); fi
           echo "::notice title=live $CH $EXT::$(echo "$OUT" | tr '\n' ' ') | $(ffmpeg -v error -i live-out.mp4 -f null - 2>&1 | head -c 200)"
