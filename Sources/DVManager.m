@@ -212,10 +212,10 @@ static NSString *DVMB(unsigned long long b) {
     self.centerLabel.text = center;
     self.rightLabel.text = frac >= 0 ? [NSString stringWithFormat:@"%d%%", (int)floor(frac * 100)] : (t.live ? @"LIVE" : @"");
     self.rightLabel.textColor = (frac < 0 && t.live) ? UIColor.systemRedColor : UIColor.whiteColor;
-    [self setFill:frac < 0 ? 0 : frac];
+    [self setFillFraction:frac < 0 ? 0 : frac];
 }
 
-- (void)setFill:(double)f {
+- (void)setFillFraction:(double)f {
     self.fillWidth.active = NO;
     self.fillWidth = [self.fill.widthAnchor constraintEqualToAnchor:self.bar.widthAnchor multiplier:MAX(0.0001, MIN(1, f))];
     self.fillWidth.active = YES;
@@ -231,7 +231,7 @@ static NSString *DVMB(unsigned long long b) {
     self.centerLabel.text = text;
     self.rightLabel.text = right;
     self.rightLabel.textColor = DVPurple;
-    [self setFill:0];
+    [self setFillFraction:0];
 }
 
 - (void)buildWindow {
