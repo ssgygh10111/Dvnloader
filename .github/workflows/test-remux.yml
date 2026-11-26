@@ -51,3 +51,4 @@ jobs:
           echo "::notice title=ffmpeg decode ref::$(ffmpeg -v error -i ref.mp4 -f null - 2>&1 | head -c 300 | tr '\n' ' ')"
           echo "::notice title=ffmpeg decode src::$(ffmpeg -v error -i in.ts -f null - 2>&1 | head -c 300 | tr '\n' ' ')"
           echo "::notice title=pkt4::$(ffprobe -v error -select_streams v -show_entries packet=pts,dts,size,pos -of csv in.ts | head -6 | tr '\n' ' ')"
+          python3 test/pk.py in.ts > pk.txt; echo "::notice title=pk::$(cat pk.txt | tr '\n' ';')"
