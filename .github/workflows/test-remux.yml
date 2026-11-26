@@ -46,3 +46,4 @@ jobs:
           echo "::notice title=refpkts::$(ffprobe -v error -select_streams v -show_entries packet=pts,dts,flags,size -of csv ref.mp4 | head -8 | tr '\n' ' ')"
           echo "::notice title=ours nals::$(./nals out.mp4 | tr '\n' ' ')"
           echo "::notice title=ref nals::$(./nals ref.mp4 | tr '\n' ' ')"
+          python3 test/tsdump.py in.ts > dump.txt; echo "::notice title=tsdump::$(cat dump.txt | tr '\n' ' ' | head -c 3500)"
