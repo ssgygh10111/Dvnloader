@@ -7,7 +7,7 @@ int main(int argc, char **argv) {
         AVAssetReader *r = [AVAssetReader assetReaderWithAsset:a error:nil];
         AVAssetReaderTrackOutput *o = [AVAssetReaderTrackOutput assetReaderTrackOutputWithTrack:vt outputSettings:nil];
         [r addOutput:o]; [r startReading];
-        for (int f = 0; f < 4; f++) {
+        for (int f = 0; f < 7; f++) {
             CMSampleBufferRef sb = [o copyNextSampleBuffer]; if (!sb) break;
             CMBlockBufferRef bb = CMSampleBufferGetDataBuffer(sb);
             size_t len = CMBlockBufferGetDataLength(bb);
