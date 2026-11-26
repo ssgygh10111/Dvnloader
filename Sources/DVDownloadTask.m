@@ -2,6 +2,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import "DVDownloadTask.h"
 #import "DVTwitch.h"
+#import "DVRemuxer.h"
 
 static const NSInteger kParallel = 6;
 
@@ -9,7 +10,13 @@ static const NSInteger kParallel = 6;
 @property (atomic) BOOL cancelled;
 @property (nonatomic, strong) NSFileHandle *handle;
 @property (nonatomic, strong) NSURL *fileURL;
-@property (nonatomic) unsigned long long bytes;
+@property (atomic) unsigned long long bytes;
+@property (atomic, readwrite) double recordedSeconds;
+@property (atomic, readwrite) double maxDuration;
+@property (atomic, readwrite) BOOL live;
+@property (atomic, readwrite) NSInteger segmentsDone;
+@property (atomic, readwrite) NSInteger segmentsTotal;
+@property (atomic, readwrite, copy) NSString *note;
 @end
 
 @implementation DVDownloadTask
@@ -20,6 +27,8 @@ static const NSInteger kParallel = 6;
     [NSFileManager.defaultManager createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
     return dir;
 }
+
+- (unsigned long long)bytesWritten { return self.bytes; }
 
 - (void)cancel {
     self.cancelled = YES;
@@ -42,7 +51,19 @@ static const NSInteger kParallel = 6;
         file = nil;
         if (!error) error = DVError(self.cancelled ? @"Cancelled" : @"Nothing was saved");
     }
-    if (file && [file.pathExtension isEqualToString:@"mp4"]) file = [self remux:file];
+    if (file) {
+        self.note = @"Converting…";
+        [self progress:@"Converting…" fraction:-1];
+        if ([file.pathExtension isEqualToString:@"mp4"]) {
+            file = [self remux:file];
+        } else if ([file.pathExtension isEqualToString:@"ts"]) {
+            NSURL *mp4 = [[file URLByDeletingPathExtension] URLByAppendingPathExtension:@"mp4"];
+            if ([DVRemuxer remuxTS:file to:mp4 error:nil]) {
+                [NSFileManager.defaultManager removeItemAtURL:file error:nil];
+                file = mp4;
+            }
+        }
+    }
     void (^cb)(NSURL *, NSError *) = self.onFinish;
     dispatch_async(dispatch_get_main_queue(), ^{
         [UIApplication.sharedApplication setIdleTimerDisabled:NO];
@@ -143,6 +164,8 @@ static NSString *DVSize(unsigned long long b) {
     }
 
     NSInteger n = segs.count;
+    self.segmentsTotal = n;
+    self.segmentsDone = 0;
     dispatch_queue_t q = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
     for (NSInteger i = 0; i < n; i += kParallel) {
         if (self.cancelled) return [self finish:DVError(@"Cancelled")];
@@ -166,6 +189,7 @@ static NSString *DVSize(unsigned long long b) {
             [self write:d];
         }
         NSInteger done = i + count;
+        self.segmentsDone = done;
         [self progress:[NSString stringWithFormat:@"Downloading… %ld / %ld  •  %@", (long)done, (long)n, DVSize(self.bytes)]
               fraction:(double)done / n];
     }
@@ -212,6 +236,8 @@ static BOOL DVIsAd(DVSegment *s) {
 }
 
 - (void)runLive:(NSURL *)url max:(double)maxDur name:(NSString *)name {
+    self.live = YES;
+    self.maxDuration = maxDur;
     [self progress:@"Starting recording…" fraction:-1];
     NSInteger lastSeq = -1;
     double recorded = 0;
@@ -256,6 +282,7 @@ static BOOL DVIsAd(DVSegment *s) {
             if (!d) { segFails++; lastErr = @"segment download failed"; continue; }
             [self write:d];
             recorded += s.duration;
+            self.recordedSeconds = recorded;
             if (maxDur > 0 && recorded >= maxDur) break;
         }
 
@@ -275,6 +302,7 @@ static BOOL DVIsAd(DVSegment *s) {
         }
 
         NSString *extra = @"";
+        self.note = adPolls > 0 ? @"Skipping ads…" : (segFails > 0 && recorded == 0 ? @"Parts failing…" : nil);
         if (adPolls > 0) extra = @"\nSkipping ads…";
         else if (segFails > 0 && recorded == 0) extra = [NSString stringWithFormat:@"\n(%d parts failed: %@)", segFails, lastErr];
 

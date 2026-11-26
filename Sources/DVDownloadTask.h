@@ -20,4 +20,13 @@
 
 + (NSURL *)outputDirectory;
 
+// Live stats for the progress bar (read from the main thread).
+@property (atomic, readonly) unsigned long long bytesWritten;
+@property (atomic, readonly) double recordedSeconds;
+@property (atomic, readonly) double maxDuration;     // live: 0 = until end
+@property (atomic, readonly) BOOL live;
+@property (atomic, readonly) NSInteger segmentsDone;
+@property (atomic, readonly) NSInteger segmentsTotal;
+@property (atomic, readonly, copy) NSString *note;   // "Skipping ads…", "Converting…"
+
 @end

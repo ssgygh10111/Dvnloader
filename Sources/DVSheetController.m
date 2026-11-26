@@ -1,6 +1,7 @@
 #import "DVSheetController.h"
 #import "DVDownloadTask.h"
 #import "DVRangeSlider.h"
+#import "DVManager.h"
 
 #define DVPurple [UIColor colorWithRed:0x91/255.0 green:0x47/255.0 blue:0xFF/255.0 alpha:1]
 #define DVBackground [UIColor colorWithRed:0x1F/255.0 green:0x1F/255.0 blue:0x23/255.0 alpha:1]
@@ -277,6 +278,14 @@ static __weak UIViewController *gCurrent;
 }
 
 - (void)load {
+    if ([DVManager shared].busy) {
+        [self reset];
+        [self.stack addArrangedSubview:[self spacer:30]];
+        [self.stack addArrangedSubview:[self label:@"A download is already running.\nStop it from the bar at the bottom, or wait for it to finish." size:15 weight:UIFontWeightMedium color:nil]];
+        [self.stack addArrangedSubview:[self spacer:10]];
+        [self.stack addArrangedSubview:[self button:@"OK" primary:YES action:@selector(close)]];
+        return;
+    }
     [self showLoading];
     __weak typeof(self) ws = self;
     [DVTwitch fetchVariantsForKind:self.kind ident:self.ident completion:^(NSArray<DVVariant *> *variants, NSError *err) {
@@ -388,11 +397,8 @@ static __weak UIViewController *gCurrent;
 }
 
 - (void)startLive:(double)secs {
-    DVDownloadTask *t = [self newTask];
-    t.liveIdent = self.ident;
-    t.liveQuality = self.selected.name;
-    [self showProgress:YES];
-    [t startLive:self.selected.url maxDuration:secs fileName:[self fileBase]];
+    [[DVManager shared] startLive:self.selected.url ident:self.ident quality:self.selected.name maxDuration:secs fileName:[self fileBase]];
+    [self dismissViewControllerAnimated:YES completion:nil];
 }
 
 #pragma mark - Past broadcast
@@ -465,9 +471,8 @@ static __weak UIViewController *gCurrent;
 }
 
 - (void)startVODFrom:(double)a to:(double)b {
-    DVDownloadTask *t = [self newTask];
-    [self showProgress:NO];
-    [t startVOD:self.selected.url from:a to:b fileName:[self fileBase]];
+    [[DVManager shared] startVOD:self.selected.url from:a to:b fileName:[self fileBase]];
+    [self dismissViewControllerAnimated:YES completion:nil];
 }
 
 #pragma mark - Progress / result
