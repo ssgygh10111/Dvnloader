@@ -21,8 +21,13 @@ jobs:
           echo "::notice title=usher $CODE::$(grep -v '^#EXT-X-TWITCH-INFO' m.m3u8 | head -c 900 | tr '\n' ' ')"
           V=$(grep -v '^#' m.m3u8 | head -1)
           curl -s "$V" -o v.m3u8
-          echo "::notice title=media head::$(head -c 1500 v.m3u8 | tr '\n' ' ')"
-          echo "::notice title=media tail::$(tail -c 1200 v.m3u8 | tr '\n' ' ')"
+          echo "::notice title=map::$(grep -E 'EXT-X-MAP|PREFETCH' v.m3u8 | head -c 600 | tr '\n' ' ')"
           S=$(grep -v '^#' v.m3u8 | tail -1)
           C2=$(curl -s -o seg.bin -w '%{http_code} %{size_download} %{content_type}' "$S")
           echo "::notice title=segment::$C2 $(head -c 16 seg.bin | xxd -p)"
+          UA="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+          C3=$(curl -s -A "$UA" -o /dev/null -w '%{http_code} %{size_download} %{http_version}' "$S")
+          echo "::notice title=segment safari UA::$C3"
+          sleep 20
+          C4=$(curl -s -o /dev/null -w '%{http_code}' "$S")
+          echo "::notice title=segment after 20s::$C4"
