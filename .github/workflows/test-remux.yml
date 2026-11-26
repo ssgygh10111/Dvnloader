@@ -11,6 +11,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build test tool
         run: clang -fobjc-arc -ISources Sources/DVRemuxer.m test/main.m -framework Foundation -framework AVFoundation -framework CoreMedia -framework AudioToolbox -framework CoreGraphics -framework CoreVideo -o remux 2>&1 | tail -30
+      - name: Build nal tool
+        run: clang -fobjc-arc test/nals.m -framework Foundation -framework AVFoundation -framework CoreMedia -o nals 2>/dev/null
       - name: Fetch a real Twitch VOD (TS) and remux
         env:
           VOD: ${{ inputs.vod }}
@@ -42,3 +44,5 @@ jobs:
           echo "::notice title=ours::$(ffprobe -v error -show_entries stream=codec_name,nb_frames,start_time,duration -of compact out.mp4 | tr '\n' ' ')"
           echo "::notice title=pkts::$(ffprobe -v error -select_streams v -show_entries packet=pts,dts,flags,size -of csv out.mp4 | head -8 | tr '\n' ' ')"
           echo "::notice title=refpkts::$(ffprobe -v error -select_streams v -show_entries packet=pts,dts,flags,size -of csv ref.mp4 | head -8 | tr '\n' ' ')"
+          echo "::notice title=ours nals::$(./nals out.mp4 | tr '\n' ' ')"
+          echo "::notice title=ref nals::$(./nals ref.mp4 | tr '\n' ' ')"
