@@ -39,7 +39,7 @@ static const NSInteger kParallel = 6;
     if (error || self.bytes == 0) {
         [NSFileManager.defaultManager removeItemAtURL:file error:nil];
         file = nil;
-        if (!error) error = DVError(self.cancelled ? @"انلغى" : @"ما انحفظ شي");
+        if (!error) error = DVError(self.cancelled ? @"Cancelled" : @"Nothing was saved");
     }
     void (^cb)(NSURL *, NSError *) = self.onFinish;
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -98,7 +98,7 @@ static NSString *DVSize(unsigned long long b) {
 }
 
 - (void)runVOD:(NSURL *)mediaURL from:(double)start to:(double)end name:(NSString *)name {
-    [self progress:@"يجهّز…" fraction:-1];
+    [self progress:@"Preparing…" fraction:-1];
     NSError *e = nil;
     DVMediaPlaylist *pl = [DVTwitch mediaPlaylistSync:mediaURL error:&e];
     if (!pl) return [self finish:e];
@@ -108,19 +108,19 @@ static NSString *DVSize(unsigned long long b) {
     for (DVSegment *s in pl.segments) {
         if (s.start + s.duration > start && s.start < end) [segs addObject:s];
     }
-    if (!segs.count) return [self finish:DVError(@"المدة المختارة فاضية")];
-    if (![self openFile:name extension:pl.mapURL ? @"mp4" : @"ts"]) return [self finish:DVError(@"ما قدرت أسوي الملف")];
+    if (!segs.count) return [self finish:DVError(@"Selected range is empty")];
+    if (![self openFile:name extension:pl.mapURL ? @"mp4" : @"ts"]) return [self finish:DVError(@"Couldn't create file")];
 
     if (pl.mapURL) {
         NSData *init = [self get:pl.mapURL];
-        if (!init) return [self finish:DVError(@"فشل تحميل بداية الفيديو")];
+        if (!init) return [self finish:DVError(@"Failed to load video header")];
         [self write:init];
     }
 
     NSInteger n = segs.count;
     dispatch_queue_t q = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
     for (NSInteger i = 0; i < n; i += kParallel) {
-        if (self.cancelled) return [self finish:DVError(@"انلغى")];
+        if (self.cancelled) return [self finish:DVError(@"Cancelled")];
         NSInteger count = MIN(kParallel, n - i);
         NSMutableArray *results = [NSMutableArray arrayWithCapacity:count];
         for (NSInteger j = 0; j < count; j++) [results addObject:NSNull.null];
@@ -135,13 +135,13 @@ static NSString *DVSize(unsigned long long b) {
         dispatch_group_wait(g, DISPATCH_TIME_FOREVER);
         for (id d in results) {
             if (d == NSNull.null) {
-                if (self.cancelled) return [self finish:DVError(@"انلغى")];
-                return [self finish:DVError(@"انقطع التحميل، جرّب مرة ثانية")];
+                if (self.cancelled) return [self finish:DVError(@"Cancelled")];
+                return [self finish:DVError(@"Download interrupted, try again")];
             }
             [self write:d];
         }
         NSInteger done = i + count;
-        [self progress:[NSString stringWithFormat:@"ينزّل… %ld / %ld  •  %@", (long)done, (long)n, DVSize(self.bytes)]
+        [self progress:[NSString stringWithFormat:@"Downloading… %ld / %ld  •  %@", (long)done, (long)n, DVSize(self.bytes)]
               fraction:(double)done / n];
     }
     [self finish:nil];
@@ -157,7 +157,7 @@ static NSString *DVSize(unsigned long long b) {
 }
 
 - (void)runLive:(NSURL *)url max:(double)maxDur name:(NSString *)name {
-    [self progress:@"يبدأ التسجيل…" fraction:-1];
+    [self progress:@"Starting recording…" fraction:-1];
     NSInteger lastSeq = -1;
     double recorded = 0;
     int fails = 0;
@@ -180,7 +180,7 @@ static NSString *DVSize(unsigned long long b) {
         fails = 0;
 
         if (!opened) {
-            if (![self openFile:name extension:pl.mapURL ? @"mp4" : @"ts"]) return [self finish:DVError(@"ما قدرت أسوي الملف")];
+            if (![self openFile:name extension:pl.mapURL ? @"mp4" : @"ts"]) return [self finish:DVError(@"Couldn't create file")];
             opened = YES;
         }
         if (pl.mapURL && !wroteMap) {
@@ -202,18 +202,18 @@ static NSString *DVSize(unsigned long long b) {
         }
 
         if (maxDur > 0) {
-            [self progress:[NSString stringWithFormat:@"يسجّل… %@ من %@  •  %@", DVFormatTime(recorded), DVFormatTime(maxDur), DVSize(self.bytes)]
+            [self progress:[NSString stringWithFormat:@"Recording… %@ of %@  •  %@", DVFormatTime(recorded), DVFormatTime(maxDur), DVSize(self.bytes)]
                   fraction:MIN(1.0, recorded / maxDur)];
             if (recorded >= maxDur) break;
         } else {
-            [self progress:[NSString stringWithFormat:@"يسجّل لين ما يخلص البث… %@  •  %@", DVFormatTime(recorded), DVSize(self.bytes)]
+            [self progress:[NSString stringWithFormat:@"Recording until end… %@  •  %@", DVFormatTime(recorded), DVSize(self.bytes)]
                   fraction:-1];
         }
         if (pl.ended) break;
         [NSThread sleepForTimeInterval:1.5];
     }
 
-    if (!opened) return [self finish:DVError(@"ما قدرت أوصل للبث")];
+    if (!opened) return [self finish:DVError(@"Couldn't reach the stream")];
     [self finish:nil]; // cancelling a live recording keeps what was recorded
 }
 

@@ -211,7 +211,7 @@ static NSString *DVAfter(NSString *line, NSString *prefix) {
     if (![tok isKindOfClass:NSDictionary.class] || ![tok[@"value"] isKindOfClass:NSString.class]) {
         NSString *raw = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] ?: @"";
         if (raw.length > 160) raw = [raw substringToIndex:160];
-        NSString *msg = live ? @"القناة مو لايف الحين" : @"ما لقيت هالبث، يمكن انحذف";
+        NSString *msg = live ? @"This channel is offline" : @"Broadcast not found (maybe deleted)";
         if (err) *err = DVError([NSString stringWithFormat:@"%@\n\n(%@ • %@)", msg, ident, raw]);
         return nil;
     }
@@ -233,9 +233,9 @@ static NSString *DVAfter(NSString *line, NSString *prefix) {
     NSError *e = nil;
     NSData *d = [self fetch:[NSURLRequest requestWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:20] error:&e];
     if (!d) {
-        NSString *msg = (e.code == 403) ? @"هالبث للمشتركين بس، ما يتنزل"
-                      : (kind == DVKindLive && e.code == 404) ? @"القناة مو لايف الحين"
-                      : (e.localizedDescription ?: @"صار خطأ");
+        NSString *msg = (e.code == 403) ? @"Subscriber-only broadcast, can't download"
+                      : (kind == DVKindLive && e.code == 404) ? @"This channel is offline"
+                      : (e.localizedDescription ?: @"Something went wrong");
         if (err) *err = DVError([NSString stringWithFormat:@"%@\n\n(%@ • usher %ld)", msg, ident, (long)e.code]);
         return nil;
     }
@@ -264,7 +264,7 @@ static NSString *DVAfter(NSString *line, NSString *prefix) {
         }
     }
     if (!variants.count) {
-        if (err) *err = DVError(@"ما لقيت جودات لهالبث");
+        if (err) *err = DVError(@"No qualities found");
         return nil;
     }
     return variants;
@@ -275,7 +275,7 @@ static NSString *DVAfter(NSString *line, NSString *prefix) {
     if (!d) return nil;
     NSString *text = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
     if (!text) {
-        if (err) *err = DVError(@"ملف البث خربان");
+        if (err) *err = DVError(@"Invalid playlist");
         return nil;
     }
     return [DVMediaPlaylist parse:text base:url];

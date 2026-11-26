@@ -1,31 +1,102 @@
 // Dvnloader — record live Twitch streams and download past broadcasts from inside the Twitch app.
 //
-// Two ways in:
-//   1. Share button on any stream / past broadcast  ->  "Dvnloader" in the share sheet.
-//   2. Two-finger long-press anywhere in the app    ->  sheet that takes a link or channel name.
+// Long-press the video (one finger) → Choose Quality → record / download.
+// The channel or broadcast is picked up automatically from what's playing.
 
 #import <UIKit/UIKit.h>
 #import "DVTwitch.h"
+#import "DVDetector.h"
 #import "DVSheetController.h"
 
-#pragma mark - Share-sheet action
+#pragma mark - Long-press on the player
+
+@interface DVGestureHandler : NSObject <UIGestureRecognizerDelegate>
+@end
+
+static BOOL DVLooksLikePlayer(UIView *v) {
+    static NSArray *keys;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ keys = @[@"player", @"video", @"stream", @"ivs", @"media"]; });
+    for (UIView *cur = v; cur; cur = cur.superview) {
+        NSString *n = NSStringFromClass(cur.class).lowercaseString;
+        for (NSString *k in keys) if ([n containsString:k]) return YES;
+        NSString *ln = NSStringFromClass(cur.layer.class).lowercaseString;
+        if ([ln containsString:@"player"]) return YES;
+    }
+    return NO;
+}
+
+@implementation DVGestureHandler
+
+- (void)fired:(UILongPressGestureRecognizer *)g {
+    if (g.state != UIGestureRecognizerStateBegan || [DVSheetController isShowing]) return;
+
+    UIWindow *w = (UIWindow *)g.view;
+    CGPoint p = [g locationInView:w];
+    UIView *hit = [w hitTest:p withEvent:nil];
+    BOOL landscape = w.bounds.size.width > w.bounds.size.height;
+    BOOL topArea = p.y < w.bounds.size.height * 0.42; // portrait player sits at the top
+    if (!DVLooksLikePlayer(hit) && !landscape && !topArea) return;
+
+    DVKind kind;
+    NSString *ident = nil;
+    BOOL known = [DVDetector current:&kind ident:&ident];
+    if (!known && !DVLooksLikePlayer(hit)) return;
+
+    [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium] impactOccurred];
+    if (known) [DVSheetController presentWithKind:kind ident:ident];
+    else [DVSheetController presentWithLink:nil];
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)a shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)b {
+    return YES;
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)touch {
+    // Don't steal long-presses from our own sheet or from text fields/controls.
+    UIView *v = touch.view;
+    if ([v isKindOfClass:UIControl.class] || [v isKindOfClass:UITextView.class]) return NO;
+    return ![DVSheetController isShowing];
+}
+
+@end
+
+static DVGestureHandler *gHandler;
+
+static void DVInstallGesture(void) {
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        for (UIWindow *w in ((UIWindowScene *)scene).windows) {
+            if (!w.isKeyWindow) continue;
+            for (UIGestureRecognizer *g in w.gestureRecognizers) {
+                if ([g.name isEqualToString:@"DVGesture"]) return;
+            }
+            UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:gHandler action:@selector(fired:)];
+            lp.name = @"DVGesture";
+            lp.numberOfTouchesRequired = 1;
+            lp.minimumPressDuration = 0.6;
+            lp.cancelsTouchesInView = NO;
+            lp.delaysTouchesBegan = NO;
+            lp.delegate = gHandler;
+            [w addGestureRecognizer:lp];
+            return;
+        }
+    }
+}
+
+#pragma mark - Share-sheet action (bonus way in)
 
 @interface DVActivity : UIActivity
 @property (nonatomic, copy) NSString *link;
 @end
 
-static NSString *DVLinkFromItem(id item) {
-    if ([item isKindOfClass:NSURL.class]) return [DVTwitch findLinkInString:[(NSURL *)item absoluteString]];
-    if ([item isKindOfClass:NSString.class]) return [DVTwitch findLinkInString:item];
-    if ([item isKindOfClass:NSAttributedString.class]) return [DVTwitch findLinkInString:[(NSAttributedString *)item string]];
-    return nil;
-}
-
-// The system hands UIActivity the *resolved* share items (item sources already asked),
-// so the link is read here instead of poking Twitch's own item-source objects.
 static NSString *DVLinkFromItems(NSArray *items) {
     for (id item in items) {
-        NSString *l = DVLinkFromItem(item);
+        NSString *s = nil;
+        if ([item isKindOfClass:NSURL.class]) s = [(NSURL *)item absoluteString];
+        else if ([item isKindOfClass:NSString.class]) s = item;
+        else if ([item isKindOfClass:NSAttributedString.class]) s = [(NSAttributedString *)item string];
+        NSString *l = [DVTwitch findLinkInString:s];
         DVKind k;
         NSString *ident = nil;
         if (l && [DVTwitch parseLink:l kind:&k ident:&ident]) return l;
@@ -43,7 +114,6 @@ static NSString *DVLinkFromItems(NSArray *items) {
 - (void)performActivity {
     NSString *link = self.link;
     [self activityDidFinish:YES];
-    // Wait for the share sheet to finish dismissing before presenting ours.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.7 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [DVSheetController presentWithLink:link];
     });
@@ -64,46 +134,8 @@ static NSString *DVLinkFromItems(NSArray *items) {
 
 %end
 
-#pragma mark - Two-finger long-press fallback
-
-@interface DVGestureHandler : NSObject <UIGestureRecognizerDelegate>
-@end
-
-@implementation DVGestureHandler
-- (void)fired:(UILongPressGestureRecognizer *)g {
-    if (g.state != UIGestureRecognizerStateBegan) return;
-    UINotificationFeedbackGenerator *h = [UINotificationFeedbackGenerator new];
-    [h notificationOccurred:UINotificationFeedbackTypeSuccess];
-    [DVSheetController presentWithLink:nil];
-}
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)a shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)b {
-    return YES;
-}
-@end
-
-static DVGestureHandler *gHandler;
-
-static void DVInstallGesture(void) {
-    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
-        if (![scene isKindOfClass:UIWindowScene.class]) continue;
-        for (UIWindow *w in ((UIWindowScene *)scene).windows) {
-            if (!w.isKeyWindow) continue;
-            for (UIGestureRecognizer *g in w.gestureRecognizers) {
-                if ([g.name isEqualToString:@"DVGesture"]) return;
-            }
-            UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:gHandler action:@selector(fired:)];
-            lp.name = @"DVGesture";
-            lp.numberOfTouchesRequired = 2;
-            lp.minimumPressDuration = 0.8;
-            lp.cancelsTouchesInView = NO;
-            lp.delegate = gHandler;
-            [w addGestureRecognizer:lp];
-            return;
-        }
-    }
-}
-
 %ctor {
+    [DVDetector install];
     gHandler = [DVGestureHandler new];
     [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification
                                                       object:nil

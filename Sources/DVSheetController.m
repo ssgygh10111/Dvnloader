@@ -1,21 +1,23 @@
 #import "DVSheetController.h"
-#import "DVTwitch.h"
 #import "DVDownloadTask.h"
 #import "DVRangeSlider.h"
 
 #define DVPurple [UIColor colorWithRed:0x91/255.0 green:0x47/255.0 blue:0xFF/255.0 alpha:1]
-#define DVBackground [UIColor colorWithRed:0x18/255.0 green:0x18/255.0 blue:0x1B/255.0 alpha:1]
-#define DVCard [UIColor colorWithRed:0x26/255.0 green:0x26/255.0 blue:0x2C/255.0 alpha:1]
+#define DVBackground [UIColor colorWithRed:0x1F/255.0 green:0x1F/255.0 blue:0x23/255.0 alpha:1]
+#define DVCard [UIColor colorWithRed:0x2C/255.0 green:0x2C/255.0 blue:0x33/255.0 alpha:1]
+#define DVDim(a) [UIColor colorWithWhite:1 alpha:(a)]
 
-static __weak DVSheetController *gCurrent;
+static __weak UIViewController *gCurrent;
 
 @interface DVSheetController () <UIPickerViewDataSource, UIPickerViewDelegate, UITextFieldDelegate>
 @property (nonatomic, copy) NSString *link;
+@property (nonatomic) BOOL hasTarget;
 @property (nonatomic) DVKind kind;
 @property (nonatomic, copy) NSString *ident;
 
 @property (nonatomic, strong) UIStackView *stack;
 @property (nonatomic, strong) UIButton *closeButton;
+@property (nonatomic, strong) UIButton *actionButton;
 @property (nonatomic, strong) UITextField *field;
 
 @property (nonatomic, strong) NSArray<DVVariant *> *variants;
@@ -52,10 +54,12 @@ static __weak DVSheetController *gCurrent;
     return vc;
 }
 
-+ (void)presentWithLink:(NSString *)link {
++ (BOOL)isShowing {
+    return gCurrent != nil;
+}
+
++ (void)show:(DVSheetController *)c {
     if (gCurrent) return;
-    DVSheetController *c = [DVSheetController new];
-    c.link = link;
     c.modalPresentationStyle = UIModalPresentationPageSheet;
     if (@available(iOS 15.0, *)) {
         c.sheetPresentationController.detents = @[UISheetPresentationControllerDetent.largeDetent];
@@ -63,6 +67,26 @@ static __weak DVSheetController *gCurrent;
     }
     gCurrent = c;
     [[self topViewController] presentViewController:c animated:YES completion:nil];
+}
+
++ (void)presentWithKind:(DVKind)kind ident:(NSString *)ident {
+    DVSheetController *c = [DVSheetController new];
+    c.hasTarget = YES;
+    c.kind = kind;
+    c.ident = ident;
+    [self show:c];
+}
+
++ (void)presentWithLink:(NSString *)link {
+    DVSheetController *c = [DVSheetController new];
+    DVKind kind;
+    NSString *ident = nil;
+    if ([DVTwitch parseLink:link kind:&kind ident:&ident]) {
+        c.hasTarget = YES;
+        c.kind = kind;
+        c.ident = ident;
+    }
+    [self show:c];
 }
 
 #pragma mark - Building blocks
@@ -81,17 +105,16 @@ static __weak DVSheetController *gCurrent;
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
     [b setTitle:title forState:UIControlStateNormal];
     [b setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    [b setTitleColor:[UIColor colorWithWhite:1 alpha:0.4] forState:UIControlStateDisabled];
     b.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
     b.backgroundColor = primary ? DVPurple : DVCard;
-    b.layer.cornerRadius = 12;
-    [b.heightAnchor constraintEqualToConstant:50].active = YES;
+    b.layer.cornerRadius = 8;
+    [b.heightAnchor constraintEqualToConstant:primary ? 44 : 46].active = YES;
     if (action) [b addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
     return b;
 }
 
 - (UILabel *)orLabel {
-    return [self label:@"أو" size:15 weight:UIFontWeightSemibold color:[UIColor colorWithWhite:1 alpha:0.45]];
+    return [self label:@"OR" size:15 weight:UIFontWeightSemibold color:DVDim(0.45)];
 }
 
 - (UIView *)spacer:(CGFloat)h {
@@ -101,10 +124,19 @@ static __weak DVSheetController *gCurrent;
 }
 
 - (void)reset {
+    self.actionButton.hidden = YES;
     for (UIView *v in self.stack.arrangedSubviews) {
         [self.stack removeArrangedSubview:v];
         [v removeFromSuperview];
     }
+}
+
+- (void)setAction:(NSString *)symbol selector:(SEL)sel {
+    [self.actionButton removeTarget:nil action:NULL forControlEvents:UIControlEventAllEvents];
+    UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:22 weight:UIImageSymbolWeightRegular];
+    [self.actionButton setImage:[UIImage systemImageNamed:symbol withConfiguration:cfg] forState:UIControlStateNormal];
+    [self.actionButton addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside];
+    self.actionButton.hidden = NO;
 }
 
 #pragma mark - Lifecycle
@@ -113,17 +145,24 @@ static __weak DVSheetController *gCurrent;
     [super viewDidLoad];
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     self.view.backgroundColor = DVBackground;
+    self.view.semanticContentAttribute = UISemanticContentAttributeForceLeftToRight;
 
-    UILabel *title = [self label:@"Dvnloader" size:18 weight:UIFontWeightBold color:nil];
+    UILabel *title = [self label:@"Dvnloader" size:17 weight:UIFontWeightSemibold color:nil];
     title.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:title];
 
     self.closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    [self.closeButton setImage:[UIImage systemImageNamed:@"xmark"] forState:UIControlStateNormal];
+    [self.closeButton setImage:[UIImage systemImageNamed:@"xmark" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:20]] forState:UIControlStateNormal];
     self.closeButton.tintColor = UIColor.whiteColor;
     self.closeButton.translatesAutoresizingMaskIntoConstraints = NO;
     [self.closeButton addTarget:self action:@selector(close) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:self.closeButton];
+
+    self.actionButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.actionButton.tintColor = UIColor.whiteColor;
+    self.actionButton.translatesAutoresizingMaskIntoConstraints = NO;
+    self.actionButton.hidden = YES;
+    [self.view addSubview:self.actionButton];
 
     self.stack = [UIStackView new];
     self.stack.axis = UILayoutConstraintAxisVertical;
@@ -136,23 +175,20 @@ static __weak DVSheetController *gCurrent;
         [title.topAnchor constraintEqualToAnchor:g.topAnchor constant:22],
         [title.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
         [self.closeButton.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
-        [self.closeButton.leftAnchor constraintEqualToAnchor:g.leftAnchor constant:16],
+        [self.closeButton.leftAnchor constraintEqualToAnchor:g.leftAnchor constant:14],
         [self.closeButton.widthAnchor constraintEqualToConstant:44],
         [self.closeButton.heightAnchor constraintEqualToConstant:44],
-        [self.stack.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:28],
-        [self.stack.leadingAnchor constraintEqualToAnchor:g.leadingAnchor constant:24],
-        [self.stack.trailingAnchor constraintEqualToAnchor:g.trailingAnchor constant:-24],
+        [self.actionButton.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
+        [self.actionButton.rightAnchor constraintEqualToAnchor:g.rightAnchor constant:-14],
+        [self.actionButton.widthAnchor constraintEqualToConstant:44],
+        [self.actionButton.heightAnchor constraintEqualToConstant:44],
+        [self.stack.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:40],
+        [self.stack.leadingAnchor constraintEqualToAnchor:g.leadingAnchor constant:36],
+        [self.stack.trailingAnchor constraintEqualToAnchor:g.trailingAnchor constant:-36],
     ]];
 
-    DVKind kind;
-    NSString *ident = nil;
-    if ([DVTwitch parseLink:self.link kind:&kind ident:&ident]) {
-        self.kind = kind;
-        self.ident = ident;
-        [self load];
-    } else {
-        [self showInput:nil];
-    }
+    if (self.hasTarget) [self load];
+    else [self showInput:nil];
 }
 
 - (void)close {
@@ -160,33 +196,32 @@ static __weak DVSheetController *gCurrent;
     [self dismissViewControllerAnimated:YES completion:nil];
 }
 
-#pragma mark - Link input
+#pragma mark - Manual link (fallback)
 
 - (void)showInput:(NSString *)error {
     [self reset];
-    [self.stack addArrangedSubview:[self label:@"حط رابط القناة أو رابط البث القديم" size:16 weight:UIFontWeightSemibold color:nil]];
+    [self.stack addArrangedSubview:[self label:@"Paste a channel or past broadcast link" size:16 weight:UIFontWeightSemibold color:nil]];
 
     self.field = [UITextField new];
-    self.field.placeholder = @"twitch.tv/... أو اسم القناة";
+    self.field.placeholder = @"twitch.tv/… or channel name";
     self.field.textColor = UIColor.whiteColor;
     self.field.backgroundColor = DVCard;
-    self.field.layer.cornerRadius = 12;
+    self.field.layer.cornerRadius = 8;
     self.field.autocapitalizationType = UITextAutocapitalizationTypeNone;
     self.field.autocorrectionType = UITextAutocorrectionTypeNo;
     self.field.keyboardType = UIKeyboardTypeURL;
     self.field.returnKeyType = UIReturnKeyGo;
-    self.field.textAlignment = NSTextAlignmentLeft;
     self.field.delegate = self;
     self.field.leftView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 14, 1)];
     self.field.leftViewMode = UITextFieldViewModeAlways;
-    [self.field.heightAnchor constraintEqualToConstant:50].active = YES;
+    [self.field.heightAnchor constraintEqualToConstant:46].active = YES;
     [self.stack addArrangedSubview:self.field];
 
     if (error) [self.stack addArrangedSubview:[self label:error size:14 weight:UIFontWeightRegular color:UIColor.systemRedColor]];
-    [self.stack addArrangedSubview:[self button:@"لصق من الحافظة" primary:NO action:@selector(paste)]];
-    [self.stack addArrangedSubview:[self button:@"كمّل" primary:YES action:@selector(submitLink)]];
-    [self.stack addArrangedSubview:[self label:@"💡 أسهل طريقة: اضغط زر المشاركة على البث واختار Dvnloader"
-                                          size:13 weight:UIFontWeightRegular color:[UIColor colorWithWhite:1 alpha:0.5]]];
+    [self.stack addArrangedSubview:[self button:@"Paste" primary:NO action:@selector(paste)]];
+    [self.stack addArrangedSubview:[self button:@"Continue" primary:YES action:@selector(submitLink)]];
+    [self.stack addArrangedSubview:[self label:@"Tip: open a stream or past broadcast, then long-press the video."
+                                          size:13 weight:UIFontWeightRegular color:DVDim(0.5)]];
 }
 
 - (void)paste {
@@ -204,7 +239,7 @@ static __weak DVSheetController *gCurrent;
     DVKind kind;
     NSString *ident = nil;
     if (![DVTwitch parseLink:self.field.text kind:&kind ident:&ident]) {
-        [self showInput:@"الرابط مو واضح، جرّب رابط قناة أو رابط بث قديم"];
+        [self showInput:@"That doesn't look like a channel or broadcast link"];
         return;
     }
     self.kind = kind;
@@ -212,26 +247,29 @@ static __weak DVSheetController *gCurrent;
     [self load];
 }
 
-#pragma mark - Loading
+#pragma mark - Loading + quality
 
-- (void)showLoading:(NSString *)text {
+- (void)showLoading {
     [self reset];
     UIActivityIndicatorView *spin = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
     spin.color = UIColor.whiteColor;
     [spin startAnimating];
-    [self.stack addArrangedSubview:[self spacer:40]];
+    [self.stack addArrangedSubview:[self spacer:60]];
     [self.stack addArrangedSubview:spin];
-    [self.stack addArrangedSubview:[self label:text size:15 weight:UIFontWeightRegular color:[UIColor colorWithWhite:1 alpha:0.7]]];
 }
 
 - (void)showError:(NSString *)msg {
     [self reset];
     [self.stack addArrangedSubview:[self spacer:30]];
-    [self.stack addArrangedSubview:[self label:@"⚠️" size:44 weight:UIFontWeightRegular color:nil]];
-    [self.stack addArrangedSubview:[self label:msg size:16 weight:UIFontWeightSemibold color:nil]];
+    UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"exclamationmark.triangle.fill"]];
+    icon.tintColor = UIColor.systemYellowColor;
+    icon.contentMode = UIViewContentModeScaleAspectFit;
+    [icon.heightAnchor constraintEqualToConstant:44].active = YES;
+    [self.stack addArrangedSubview:icon];
+    [self.stack addArrangedSubview:[self label:msg size:15 weight:UIFontWeightMedium color:nil]];
     [self.stack addArrangedSubview:[self spacer:10]];
-    [self.stack addArrangedSubview:[self button:@"جرّب مرة ثانية" primary:YES action:@selector(load)]];
-    [self.stack addArrangedSubview:[self button:@"رابط ثاني" primary:NO action:@selector(backToInput)]];
+    [self.stack addArrangedSubview:[self button:@"Try again" primary:YES action:@selector(load)]];
+    [self.stack addArrangedSubview:[self button:@"Enter a link" primary:NO action:@selector(backToInput)]];
 }
 
 - (void)backToInput {
@@ -239,69 +277,85 @@ static __weak DVSheetController *gCurrent;
 }
 
 - (void)load {
-    [self showLoading:self.kind == DVKindLive ? @"يجيب البث المباشر…" : @"يجيب البث القديم…"];
+    [self showLoading];
     __weak typeof(self) ws = self;
     [DVTwitch fetchVariantsForKind:self.kind ident:self.ident completion:^(NSArray<DVVariant *> *variants, NSError *err) {
         if (!ws) return;
-        if (!variants) return [ws showError:err.localizedDescription ?: @"صار خطأ"];
+        if (!variants) {
+            [ws showError:err.localizedDescription ?: @"Something went wrong"];
+            return;
+        }
         ws.variants = variants;
-        ws.selected = variants.firstObject;
-        if (ws.kind == DVKindLive) return [ws showLive];
-        [DVTwitch fetchMediaPlaylist:ws.selected.url completion:^(DVMediaPlaylist *pl, NSError *e2) {
-            if (!ws) return;
-            if (!pl) return [ws showError:e2.localizedDescription ?: @"صار خطأ"];
-            ws.vodDuration = pl.total;
-            [ws showVOD];
-        }];
+        [ws chooseQuality];
     }];
 }
 
-#pragma mark - Quality
-
-- (UIButton *)makeQualityButton {
-    UIButton *b = [self button:@"" primary:NO action:NULL];
-    b.showsMenuAsPrimaryAction = YES;
-    self.qualityButton = b;
-    [self refreshQualityMenu];
-    return b;
-}
-
-- (void)refreshQualityMenu {
-    [self.qualityButton setTitle:[NSString stringWithFormat:@"الجودة: %@  ▾", self.selected.name] forState:UIControlStateNormal];
-    NSMutableArray *actions = [NSMutableArray array];
+- (void)chooseQuality {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Choose Quality" message:nil
+                                                        preferredStyle:UIAlertControllerStyleActionSheet];
     __weak typeof(self) ws = self;
     for (DVVariant *v in self.variants) {
-        UIAction *a = [UIAction actionWithTitle:v.name image:nil identifier:nil handler:^(__kindof UIAction *action) {
+        [a addAction:[UIAlertAction actionWithTitle:v.name style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
             ws.selected = v;
-            [ws refreshQualityMenu];
-        }];
-        a.state = v == self.selected ? UIMenuElementStateOn : UIMenuElementStateOff;
-        [actions addObject:a];
+            [ws qualityChosen];
+        }]];
     }
-    self.qualityButton.menu = [UIMenu menuWithTitle:@"اختار الجودة" children:actions];
+    [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *x) {
+        if (!ws.selected) [ws close];
+    }]];
+    a.popoverPresentationController.sourceView = self.view;
+    a.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(self.view.bounds), CGRectGetMidY(self.view.bounds), 1, 1);
+    [self presentViewController:a animated:YES completion:nil];
+}
+
+- (void)qualityChosen {
+    if (self.kind == DVKindLive) {
+        [self showLive];
+        return;
+    }
+    [self showLoading];
+    __weak typeof(self) ws = self;
+    [DVTwitch fetchMediaPlaylist:self.selected.url completion:^(DVMediaPlaylist *pl, NSError *e) {
+        if (!ws) return;
+        if (!pl) {
+            [ws showError:e.localizedDescription ?: @"Something went wrong"];
+            return;
+        }
+        ws.vodDuration = pl.total;
+        [ws showVOD];
+    }];
+}
+
+- (UIView *)infoLine {
+    NSString *who = self.kind == DVKindLive ? self.ident : [@"Video " stringByAppendingString:self.ident];
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    [b setTitle:[NSString stringWithFormat:@"%@  •  %@  ▾", who, self.selected.name] forState:UIControlStateNormal];
+    [b setTitleColor:DVDim(0.55) forState:UIControlStateNormal];
+    b.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    [b addTarget:self action:@selector(chooseQuality) forControlEvents:UIControlEventTouchUpInside];
+    return b;
 }
 
 #pragma mark - Live
 
 - (void)showLive {
     [self reset];
-    [self.stack addArrangedSubview:[self label:[NSString stringWithFormat:@"🔴 لايف الحين • %@", self.ident]
-                                          size:15 weight:UIFontWeightSemibold color:[UIColor colorWithWhite:1 alpha:0.85]]];
-    [self.stack addArrangedSubview:[self makeQualityButton]];
-    [self.stack addArrangedSubview:[self spacer:6]];
-    [self.stack addArrangedSubview:[self label:@"حدد مدة التسجيل" size:16 weight:UIFontWeightSemibold color:nil]];
+    [self setAction:@"record.circle" selector:@selector(recordTimed)];
+    [self.stack addArrangedSubview:[self label:@"Select recording duration" size:15 weight:UIFontWeightSemibold color:nil]];
 
     self.picker = [UIPickerView new];
     self.picker.dataSource = self;
     self.picker.delegate = self;
-    self.picker.semanticContentAttribute = UISemanticContentAttributeForceLeftToRight;
-    [self.picker.heightAnchor constraintEqualToConstant:160].active = YES;
-    [self.picker selectRow:30 inComponent:1 animated:NO];
+    [self.picker.heightAnchor constraintEqualToConstant:190].active = YES;
+    [self.picker selectRow:1 inComponent:1 animated:NO];
     [self.stack addArrangedSubview:self.picker];
 
-    [self.stack addArrangedSubview:[self button:@"سجّل المدة المحددة" primary:YES action:@selector(recordTimed)]];
+    [self.stack addArrangedSubview:[self spacer:20]];
     [self.stack addArrangedSubview:[self orLabel]];
-    [self.stack addArrangedSubview:[self button:@"سجّل لين ما يخلص البث" primary:YES action:@selector(recordUntilEnd)]];
+    [self.stack addArrangedSubview:[self spacer:8]];
+    [self.stack addArrangedSubview:[self button:@"Record until end" primary:YES action:@selector(recordUntilEnd)]];
+    [self.stack addArrangedSubview:[self spacer:4]];
+    [self.stack addArrangedSubview:[self infoLine]];
 }
 
 - (NSInteger)numberOfComponentsInPickerView:(UIPickerView *)pickerView { return 2; }
@@ -311,7 +365,7 @@ static __weak DVSheetController *gCurrent;
 }
 
 - (NSAttributedString *)pickerView:(UIPickerView *)pickerView attributedTitleForRow:(NSInteger)row forComponent:(NSInteger)component {
-    NSString *s = [NSString stringWithFormat:@"%ld %@", (long)row, component == 0 ? @"ساعة" : @"دقيقة"];
+    NSString *s = [NSString stringWithFormat:@"%ld %@", (long)row, component == 0 ? (row == 1 ? @"hour" : @"hours") : @"min"];
     return [[NSAttributedString alloc] initWithString:s attributes:@{NSForegroundColorAttributeName: UIColor.whiteColor}];
 }
 
@@ -345,23 +399,31 @@ static __weak DVSheetController *gCurrent;
     [t startLive:self.selected.url maxDuration:secs fileName:[self fileBase]];
 }
 
-#pragma mark - VOD
+#pragma mark - Past broadcast
 
 - (void)showVOD {
     [self reset];
-    [self.stack addArrangedSubview:[self label:[NSString stringWithFormat:@"بث قديم • المدة %@", DVFormatTime(self.vodDuration)]
-                                          size:15 weight:UIFontWeightSemibold color:[UIColor colorWithWhite:1 alpha:0.85]]];
-    [self.stack addArrangedSubview:[self makeQualityButton]];
-    [self.stack addArrangedSubview:[self spacer:6]];
-    [self.stack addArrangedSubview:[self label:@"حدد الجزء اللي تبي تنزّله" size:16 weight:UIFontWeightSemibold color:nil]];
+    [self setAction:@"square.and.arrow.down" selector:@selector(downloadRange)];
 
-    self.fromLabel = [self label:@"" size:13 weight:UIFontWeightMedium color:[UIColor colorWithWhite:1 alpha:0.75]];
-    self.toLabel = [self label:@"" size:13 weight:UIFontWeightMedium color:[UIColor colorWithWhite:1 alpha:0.75]];
+    UIStackView *head = [UIStackView new];
+    head.spacing = 8;
+    head.alignment = UIStackViewAlignmentCenter;
+    UILabel *t = [self label:@"Specify the duration for downloading" size:15 weight:UIFontWeightSemibold color:nil];
+    UIButton *info = [UIButton buttonWithType:UIButtonTypeInfoLight];
+    info.tintColor = DVDim(0.8);
+    [info addTarget:self action:@selector(showRangeInfo) forControlEvents:UIControlEventTouchUpInside];
+    [info setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    [head addArrangedSubview:t];
+    [head addArrangedSubview:info];
+    [self.stack addArrangedSubview:head];
+    [self.stack addArrangedSubview:[self spacer:10]];
+
+    self.fromLabel = [self label:@"" size:12 weight:UIFontWeightMedium color:DVDim(0.85)];
+    self.toLabel = [self label:@"" size:12 weight:UIFontWeightMedium color:DVDim(0.85)];
     self.fromLabel.textAlignment = NSTextAlignmentLeft;
     self.toLabel.textAlignment = NSTextAlignmentRight;
     UIStackView *row = [[UIStackView alloc] initWithArrangedSubviews:@[self.fromLabel, self.toLabel]];
     row.distribution = UIStackViewDistributionFillEqually;
-    row.semanticContentAttribute = UISemanticContentAttributeForceLeftToRight;
     [self.stack addArrangedSubview:row];
 
     self.slider = [DVRangeSlider new];
@@ -371,19 +433,30 @@ static __weak DVSheetController *gCurrent;
     [self.slider addTarget:self action:@selector(rangeChanged) forControlEvents:UIControlEventValueChanged];
     [self.stack addArrangedSubview:self.slider];
 
-    self.rangeLabel = [self label:@"" size:13 weight:UIFontWeightRegular color:[UIColor colorWithWhite:1 alpha:0.5]];
+    self.rangeLabel = [self label:@"" size:12 weight:UIFontWeightRegular color:DVDim(0.45)];
     [self.stack addArrangedSubview:self.rangeLabel];
     [self rangeChanged];
 
-    [self.stack addArrangedSubview:[self button:@"نزّل الجزء المحدد" primary:YES action:@selector(downloadRange)]];
+    [self.stack addArrangedSubview:[self spacer:20]];
     [self.stack addArrangedSubview:[self orLabel]];
-    [self.stack addArrangedSubview:[self button:@"نزّل البث كامل" primary:YES action:@selector(downloadFull)]];
+    [self.stack addArrangedSubview:[self spacer:8]];
+    [self.stack addArrangedSubview:[self button:@"Download full" primary:YES action:@selector(downloadFull)]];
+    [self.stack addArrangedSubview:[self spacer:4]];
+    [self.stack addArrangedSubview:[self infoLine]];
+}
+
+- (void)showRangeInfo {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Pick a part"
+        message:@"Drag the two handles to choose where the clip starts and ends, then tap the download icon at the top right."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:a animated:YES completion:nil];
 }
 
 - (void)rangeChanged {
     self.fromLabel.text = DVFormatTime(self.slider.lowerValue);
     self.toLabel.text = DVFormatTime(self.slider.upperValue);
-    self.rangeLabel.text = [NSString stringWithFormat:@"طول الجزء: %@", DVFormatTime(self.slider.upperValue - self.slider.lowerValue)];
+    self.rangeLabel.text = [NSString stringWithFormat:@"Length: %@", DVFormatTime(self.slider.upperValue - self.slider.lowerValue)];
 }
 
 - (void)downloadRange {
@@ -416,7 +489,7 @@ static __weak DVSheetController *gCurrent;
         ws.modalInPresentation = NO;
         ws.closeButton.hidden = NO;
         if (file) [ws showDone:file];
-        else [ws showError:error.localizedDescription ?: @"صار خطأ"];
+        else [ws showError:error.localizedDescription ?: @"Something went wrong"];
     };
     self.task = t;
     return t;
@@ -427,20 +500,24 @@ static __weak DVSheetController *gCurrent;
     self.modalInPresentation = YES;
     self.closeButton.hidden = YES;
     [self.stack addArrangedSubview:[self spacer:30]];
-    [self.stack addArrangedSubview:[self label:live ? @"🔴" : @"⬇️" size:44 weight:UIFontWeightRegular color:nil]];
-    self.statusLabel = [self label:@"يجهّز…" size:15 weight:UIFontWeightMedium color:nil];
+    UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:live ? @"record.circle" : @"arrow.down.circle"]];
+    icon.tintColor = live ? UIColor.systemRedColor : DVPurple;
+    icon.contentMode = UIViewContentModeScaleAspectFit;
+    [icon.heightAnchor constraintEqualToConstant:50].active = YES;
+    [self.stack addArrangedSubview:icon];
+    self.statusLabel = [self label:@"Preparing…" size:15 weight:UIFontWeightMedium color:nil];
     [self.stack addArrangedSubview:self.statusLabel];
     self.progressView = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
     self.progressView.progressTintColor = DVPurple;
     self.progressView.hidden = YES;
     [self.stack addArrangedSubview:self.progressView];
-    [self.stack addArrangedSubview:[self label:@"خل التطبيق مفتوح لين يخلص" size:13 weight:UIFontWeightRegular color:[UIColor colorWithWhite:1 alpha:0.5]]];
+    [self.stack addArrangedSubview:[self label:@"Keep Twitch open until it finishes" size:13 weight:UIFontWeightRegular color:DVDim(0.5)]];
     [self.stack addArrangedSubview:[self spacer:10]];
-    [self.stack addArrangedSubview:[self button:live ? @"وقّف واحفظ اللي تسجّل" : @"إلغاء" primary:NO action:@selector(stopTask)]];
+    [self.stack addArrangedSubview:[self button:live ? @"Stop & save" : @"Cancel" primary:NO action:@selector(stopTask)]];
 }
 
 - (void)stopTask {
-    self.statusLabel.text = @"يوقّف…";
+    self.statusLabel.text = @"Stopping…";
     [self.task cancel];
 }
 
@@ -450,16 +527,20 @@ static __weak DVSheetController *gCurrent;
     NSNumber *size = nil;
     [file getResourceValue:&size forKey:NSURLFileSizeKey error:nil];
     [self.stack addArrangedSubview:[self spacer:30]];
-    [self.stack addArrangedSubview:[self label:@"✅" size:44 weight:UIFontWeightRegular color:nil]];
-    [self.stack addArrangedSubview:[self label:@"خلص!" size:20 weight:UIFontWeightBold color:nil]];
+    UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"checkmark.circle.fill"]];
+    icon.tintColor = UIColor.systemGreenColor;
+    icon.contentMode = UIViewContentModeScaleAspectFit;
+    [icon.heightAnchor constraintEqualToConstant:50].active = YES;
+    [self.stack addArrangedSubview:icon];
+    [self.stack addArrangedSubview:[self label:@"Done!" size:20 weight:UIFontWeightBold color:nil]];
     NSString *info = [NSString stringWithFormat:@"%@\n%@", file.lastPathComponent,
                       [NSByteCountFormatter stringFromByteCount:size.longLongValue countStyle:NSByteCountFormatterCountStyleFile]];
-    [self.stack addArrangedSubview:[self label:info size:13 weight:UIFontWeightRegular color:[UIColor colorWithWhite:1 alpha:0.6]]];
+    [self.stack addArrangedSubview:[self label:info size:13 weight:UIFontWeightRegular color:DVDim(0.6)]];
     [self.stack addArrangedSubview:[self spacer:10]];
-    [self.stack addArrangedSubview:[self button:@"احفظ / شارك" primary:YES action:@selector(shareResult:)]];
-    [self.stack addArrangedSubview:[self button:@"تم" primary:NO action:@selector(close)]];
-    [self.stack addArrangedSubview:[self label:@"الملف موجود بعد في تطبيق الملفات ← على الآيفون ← Twitch ← Dvnloader"
-                                          size:12 weight:UIFontWeightRegular color:[UIColor colorWithWhite:1 alpha:0.45]]];
+    [self.stack addArrangedSubview:[self button:@"Save / Share" primary:YES action:@selector(shareResult:)]];
+    [self.stack addArrangedSubview:[self button:@"Close" primary:NO action:@selector(close)]];
+    [self.stack addArrangedSubview:[self label:@"Also saved in Files › On My iPhone › Twitch › Dvnloader"
+                                          size:12 weight:UIFontWeightRegular color:DVDim(0.45)]];
 }
 
 - (void)shareResult:(UIButton *)sender {
