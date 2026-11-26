@@ -52,3 +52,16 @@ jobs:
           echo "::notice title=ffmpeg decode src::$(ffmpeg -v error -i in.ts -f null - 2>&1 | head -c 300 | tr '\n' ' ')"
           echo "::notice title=pkt4::$(ffprobe -v error -select_streams v -show_entries packet=pts,dts,size,pos -of csv in.ts | head -6 | tr '\n' ' ')"
           python3 test/pk.py in.ts > pk.txt; echo "::notice title=pk::$(cat pk.txt | tr '\n' ';')"
+          clang -fobjc-arc test/fmp4.m -framework Foundation -framework AVFoundation -framework CoreMedia -o fmp4 2>/dev/null
+          CH=$(curl -s -H "Client-ID: kimne78kx3ncx6brgo4mv6wki5h1ko" -H "Content-Type: application/json" -d '{"query":"{ streams(first: 5) { edges { node { broadcaster { login } } } } }"}' https://gql.twitch.tv/gql | jq -r '.data.streams.edges[0].node.broadcaster.login')
+          Q2=$(jq -nc --arg q "$Q" --arg l "$CH" '{operationName:"PlaybackAccessToken_Template",query:$q,variables:{isLive:true,login:$l,isVod:false,vodID:"",playerType:"site"}}')
+          R2=$(curl -s -H "Client-ID: kimne78kx3ncx6brgo4mv6wki5h1ko" -H "Content-Type: application/json" -d "$Q2" https://gql.twitch.tv/gql)
+          curl -s -G "https://usher.ttvnw.net/api/channel/hls/$CH.m3u8" --data-urlencode "sig=$(echo "$R2" | jq -r '.data.streamPlaybackAccessToken.signature')" --data-urlencode "token=$(echo "$R2" | jq -r '.data.streamPlaybackAccessToken.value')" -d allow_source=true -d supported_codecs=avc1 -o lm.m3u8
+          LV=$(grep -v '^#' lm.m3u8 | head -1); curl -s "$LV" -o lv.m3u8
+          MAP=$(grep -o 'EXT-X-MAP:URI="[^"]*"' lv.m3u8 | head -1 | sed 's/EXT-X-MAP:URI="//; s/"$//')
+          : > live.bin
+          if [ -n "$MAP" ]; then curl -s "$MAP" >> live.bin; EXT=mp4; else EXT=ts; fi
+          for s in $(grep -B1 -v '^#' lv.m3u8 | grep -A1 'live$' | grep -v '^#' | grep -v '^--' | tail -5); do curl -s "$s" >> live.bin; done
+          mv live.bin live.$EXT; ls -la live.$EXT
+          if [ "$EXT" = mp4 ]; then OUT=$(./fmp4 live.mp4 live-out.mp4); else OUT=$(./remux live.ts live-out.mp4); fi
+          echo "::notice title=live $CH $EXT::$(echo "$OUT" | tr '\n' ' ') | $(ffmpeg -v error -i live-out.mp4 -f null - 2>&1 | head -c 200)"
