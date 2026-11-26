@@ -1,0 +1,54 @@
+name: Build Dvnloader
+
+on:
+  workflow_dispatch:
+    inputs:
+      ipa_url:
+        description: "رابط IPA تويتش (مفكوك التشفير) — اتركه فاضي إذا تبي الـ dylib بس"
+        required: false
+        default: ""
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Theos
+        run: |
+          brew install ldid make
+          git clone --recursive --depth 1 https://github.com/theos/theos.git "$HOME/theos"
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+
+      - name: Build tweak
+        run: |
+          gmake package FINALPACKAGE=1
+          mkdir -p out
+          cp "$(find .theos/obj -name 'Dvnloader.dylib' | head -n 1)" out/
+          cp packages/*.deb out/ 2>/dev/null || true
+
+      - name: Inject into Twitch IPA
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.ipa_url != '' }}
+        env:
+          IPA_URL: ${{ inputs.ipa_url }}
+        run: |
+          curl -fL -o twitch.ipa "$IPA_URL"
+          mkdir work && cd work && unzip -q ../twitch.ipa
+          APP="$(ls -d Payload/*.app | head -n 1)"
+          PLIST="$APP/Info.plist"
+          # Show the app's Documents folder (where recordings are saved) in the Files app.
+          for KEY in UIFileSharingEnabled LSSupportsOpeningDocumentsInPlace; do
+            /usr/libexec/PlistBuddy -c "Delete :$KEY" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :$KEY bool true" "$PLIST"
+          done
+          zip -qry ../twitch-patched.ipa Payload
+          cd ..
+          python3 -m pip install --break-system-packages https://github.com/asdfzxcvbn/pyzule-rw/archive/main.zip
+          cyan -i twitch-patched.ipa -o out/Twitch-Dvnloader.ipa -f out/Dvnloader.dylib
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Dvnloader
+          path: out/

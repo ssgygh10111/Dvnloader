@@ -1,0 +1,19 @@
+#import <Foundation/Foundation.h>
+
+@interface DVDownloadTask : NSObject
+
+// Both called on the main thread.
+@property (nonatomic, copy) void (^onProgress)(NSString *status, double fraction); // fraction < 0 = indeterminate
+@property (nonatomic, copy) void (^onFinish)(NSURL *file, NSError *error);
+
+// Called on a background thread when a live playlist stops answering;
+// return a fresh media-playlist URL for the same quality, or nil if the stream is offline.
+@property (nonatomic, copy) NSURL *(^refreshLiveURL)(void);
+
+- (void)startVOD:(NSURL *)mediaURL from:(double)start to:(double)end fileName:(NSString *)name;
+- (void)startLive:(NSURL *)mediaURL maxDuration:(double)seconds fileName:(NSString *)name; // seconds <= 0: until stream ends
+- (void)cancel;
+
++ (NSURL *)outputDirectory;
+
+@end

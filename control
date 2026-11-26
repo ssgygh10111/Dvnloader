@@ -1,0 +1,9 @@
+Package: com.ssgygh10111.dvnloader
+Name: Dvnloader
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: Record live Twitch streams and download past broadcasts (quality + time range) from inside the Twitch app.
+Maintainer: ssgygh10111
+Author: ssgygh10111
+Section: Tweaks
+Depends: firmware (>= 15.0)
