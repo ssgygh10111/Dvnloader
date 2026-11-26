@@ -7,7 +7,7 @@ int main(int argc, char **argv) {
         NSURL *src = [NSURL fileURLWithPath:@(argv[1])], *dst = [NSURL fileURLWithPath:@(argv[2])];
         NSDate *t0 = NSDate.date;
         NSError *e = nil;
-        BOOL ok = [DVRemuxer remuxTS:src to:dst error:&e];
+        BOOL ok = argc > 3 ? YES : [DVRemuxer remuxTS:src to:dst error:&e];
         printf("remux=%d err=%s time=%.1fs\n", ok, e.localizedDescription.UTF8String ?: "-", -t0.timeIntervalSinceNow);
         if (!ok) return 1;
         AVURLAsset *a = [AVURLAsset URLAssetWithURL:dst options:nil];

@@ -47,3 +47,7 @@ jobs:
           echo "::notice title=ours nals::$(./nals out.mp4 | tr '\n' ' ')"
           echo "::notice title=ref nals::$(./nals ref.mp4 | tr '\n' ' ')"
           python3 test/tsdump.py in.ts > dump.txt; echo "::notice title=tsdump::$(cat dump.txt | tr '\n' ' ' | head -c 3500)"
+          echo "::notice title=ref via our checker::$(./remux in.ts ref.mp4 x | tr '\n' ' ')"
+          echo "::notice title=ffmpeg decode ref::$(ffmpeg -v error -i ref.mp4 -f null - 2>&1 | head -c 300 | tr '\n' ' ')"
+          echo "::notice title=ffmpeg decode src::$(ffmpeg -v error -i in.ts -f null - 2>&1 | head -c 300 | tr '\n' ' ')"
+          echo "::notice title=pkt4::$(ffprobe -v error -select_streams v -show_entries packet=pts,dts,size,pos -of csv in.ts | head -6 | tr '\n' ' ')"
