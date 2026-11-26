@@ -43,6 +43,8 @@ jobs:
             /usr/libexec/PlistBuddy -c "Delete :$KEY" "$PLIST" 2>/dev/null || true
             /usr/libexec/PlistBuddy -c "Add :$KEY bool true" "$PLIST"
           done
+          /usr/libexec/PlistBuddy -c "Print :NSPhotoLibraryAddUsageDescription" "$PLIST" >/dev/null 2>&1 || \
+            /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryAddUsageDescription string 'Save downloaded streams to your Photos.'" "$PLIST"
           zip -qry ../twitch-patched.ipa Payload
           cd ..
           python3 -m pip install --break-system-packages https://github.com/asdfzxcvbn/pyzule-rw/archive/main.zip

@@ -12,6 +12,10 @@
 
 - (void)startVOD:(NSURL *)mediaURL from:(double)start to:(double)end fileName:(NSString *)name;
 - (void)startLive:(NSURL *)mediaURL maxDuration:(double)seconds fileName:(NSString *)name; // seconds <= 0: until stream ends
+
+// Set before startLive so the task can re-request the stream (token expiry, ad-free player types).
+@property (nonatomic, copy) NSString *liveIdent;
+@property (nonatomic, copy) NSString *liveQuality;
 - (void)cancel;
 
 + (NSURL *)outputDirectory;

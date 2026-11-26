@@ -35,6 +35,7 @@ typedef NS_ENUM(NSInteger, DVKind) {
 // Blocking network helpers — call off the main thread only.
 + (NSData *)fetch:(NSURLRequest *)req error:(NSError **)err;
 + (NSArray<DVVariant *> *)variantsSyncForKind:(DVKind)kind ident:(NSString *)ident error:(NSError **)err;
++ (NSArray<DVVariant *> *)variantsSyncForKind:(DVKind)kind ident:(NSString *)ident playerType:(NSString *)playerType error:(NSError **)err;
 + (DVMediaPlaylist *)mediaPlaylistSync:(NSURL *)url error:(NSError **)err;
 
 // Async wrappers — completion on main thread.

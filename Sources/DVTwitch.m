@@ -181,7 +181,7 @@ static NSString *DVAfter(NSString *line, NSString *prefix) {
     return error ? nil : data;
 }
 
-+ (NSDictionary *)accessTokenForKind:(DVKind)kind ident:(NSString *)ident error:(NSError **)err {
++ (NSDictionary *)accessTokenForKind:(DVKind)kind ident:(NSString *)ident playerType:(NSString *)playerType error:(NSError **)err {
     BOOL live = kind == DVKindLive;
     NSString *q =
         @"query PlaybackAccessToken_Template($login: String!, $isLive: Boolean!, $vodID: ID!, $isVod: Boolean!, $playerType: String!) {"
@@ -193,7 +193,7 @@ static NSString *DVAfter(NSString *line, NSString *prefix) {
         @"variables": @{
             @"isLive": (live ? @YES : @NO), @"login": live ? ident : @"",
             @"isVod": (live ? @NO : @YES), @"vodID": live ? @"" : ident,
-            @"playerType": @"site",
+            @"playerType": playerType ?: @"site",
         },
     };
     NSMutableURLRequest *r = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://gql.twitch.tv/gql"]];
@@ -219,7 +219,11 @@ static NSString *DVAfter(NSString *line, NSString *prefix) {
 }
 
 + (NSArray<DVVariant *> *)variantsSyncForKind:(DVKind)kind ident:(NSString *)ident error:(NSError **)err {
-    NSDictionary *tok = [self accessTokenForKind:kind ident:ident error:err];
+    return [self variantsSyncForKind:kind ident:ident playerType:@"site" error:err];
+}
+
++ (NSArray<DVVariant *> *)variantsSyncForKind:(DVKind)kind ident:(NSString *)ident playerType:(NSString *)playerType error:(NSError **)err {
+    NSDictionary *tok = [self accessTokenForKind:kind ident:ident playerType:playerType error:err];
     if (!tok) return nil;
 
     NSString *base = kind == DVKindLive

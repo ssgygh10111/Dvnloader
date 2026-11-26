@@ -389,12 +389,8 @@ static __weak UIViewController *gCurrent;
 
 - (void)startLive:(double)secs {
     DVDownloadTask *t = [self newTask];
-    NSString *ident = self.ident, *qname = self.selected.name;
-    t.refreshLiveURL = ^NSURL *{
-        NSArray<DVVariant *> *vs = [DVTwitch variantsSyncForKind:DVKindLive ident:ident error:nil];
-        for (DVVariant *v in vs) if ([v.name isEqualToString:qname]) return v.url;
-        return vs.firstObject.url;
-    };
+    t.liveIdent = self.ident;
+    t.liveQuality = self.selected.name;
     [self showProgress:YES];
     [t startLive:self.selected.url maxDuration:secs fileName:[self fileBase]];
 }
@@ -537,10 +533,29 @@ static __weak UIViewController *gCurrent;
                       [NSByteCountFormatter stringFromByteCount:size.longLongValue countStyle:NSByteCountFormatterCountStyleFile]];
     [self.stack addArrangedSubview:[self label:info size:13 weight:UIFontWeightRegular color:DVDim(0.6)]];
     [self.stack addArrangedSubview:[self spacer:10]];
-    [self.stack addArrangedSubview:[self button:@"Save / Share" primary:YES action:@selector(shareResult:)]];
+    if (UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(file.path)) {
+        [self.stack addArrangedSubview:[self button:@"Save to Photos" primary:YES action:@selector(saveToPhotos:)]];
+        [self.stack addArrangedSubview:[self button:@"Share" primary:NO action:@selector(shareResult:)]];
+    } else {
+        [self.stack addArrangedSubview:[self button:@"Save / Share" primary:YES action:@selector(shareResult:)]];
+    }
     [self.stack addArrangedSubview:[self button:@"Close" primary:NO action:@selector(close)]];
     [self.stack addArrangedSubview:[self label:@"Also saved in Files › On My iPhone › Twitch › Dvnloader"
                                           size:12 weight:UIFontWeightRegular color:DVDim(0.45)]];
+}
+
+- (void)saveToPhotos:(UIButton *)sender {
+    if (!self.resultFile) return;
+    sender.enabled = NO;
+    UISaveVideoAtPathToSavedPhotosAlbum(self.resultFile.path, self, @selector(video:didFinishSavingWithError:contextInfo:), NULL);
+}
+
+- (void)video:(NSString *)path didFinishSavingWithError:(NSError *)error contextInfo:(void *)ctx {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:error ? @"Couldn't save" : @"Saved to Photos ✅"
+                                                               message:error.localizedDescription
+                                                        preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:a animated:YES completion:nil];
 }
 
 - (void)shareResult:(UIButton *)sender {

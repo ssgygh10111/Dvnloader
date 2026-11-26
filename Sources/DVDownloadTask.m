@@ -1,4 +1,5 @@
 #import <UIKit/UIKit.h>
+#import <AVFoundation/AVFoundation.h>
 #import "DVDownloadTask.h"
 #import "DVTwitch.h"
 
@@ -41,11 +42,35 @@ static const NSInteger kParallel = 6;
         file = nil;
         if (!error) error = DVError(self.cancelled ? @"Cancelled" : @"Nothing was saved");
     }
+    if (file && [file.pathExtension isEqualToString:@"mp4"]) file = [self remux:file];
     void (^cb)(NSURL *, NSError *) = self.onFinish;
     dispatch_async(dispatch_get_main_queue(), ^{
         [UIApplication.sharedApplication setIdleTimerDisabled:NO];
         if (cb) cb(file, error);
     });
+}
+
+// Twitch sends fragmented MP4; rewrite it as a regular MP4 so Photos / WhatsApp accept it.
+- (NSURL *)remux:(NSURL *)src {
+    [self progress:@"Finishing…" fraction:-1];
+    NSURL *tmp = [[src URLByDeletingPathExtension] URLByAppendingPathExtension:@"tmp.mp4"];
+    [NSFileManager.defaultManager removeItemAtURL:tmp error:nil];
+    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:src options:nil];
+    AVAssetExportSession *ex = [AVAssetExportSession exportSessionWithAsset:asset presetName:AVAssetExportPresetPassthrough];
+    if (!ex || ![ex.supportedFileTypes containsObject:AVFileTypeMPEG4]) return src;
+    ex.outputURL = tmp;
+    ex.outputFileType = AVFileTypeMPEG4;
+    ex.shouldOptimizeForNetworkUse = YES;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    [ex exportAsynchronouslyWithCompletionHandler:^{ dispatch_semaphore_signal(sem); }];
+    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+    if (ex.status != AVAssetExportSessionStatusCompleted) {
+        [NSFileManager.defaultManager removeItemAtURL:tmp error:nil];
+        return src;
+    }
+    [NSFileManager.defaultManager removeItemAtURL:src error:nil];
+    [NSFileManager.defaultManager moveItemAtURL:tmp toURL:src error:nil];
+    return src;
 }
 
 - (BOOL)openFile:(NSString *)name extension:(NSString *)ext {
@@ -156,11 +181,43 @@ static NSString *DVSize(unsigned long long b) {
     });
 }
 
+// Twitch stitches ads into new viewing sessions. Other player types often get the clean stream.
+static NSArray *DVPlayerTypes(void) {
+    return @[@"site", @"embed", @"popout", @"autoplay", @"picture-by-picture", @"frontpage"];
+}
+
+- (NSURL *)liveURLForPlayerType:(NSString *)pt {
+    if (!self.liveIdent) return nil;
+    NSArray<DVVariant *> *vs = [DVTwitch variantsSyncForKind:DVKindLive ident:self.liveIdent playerType:pt error:nil];
+    for (DVVariant *v in vs) if ([v.name isEqualToString:self.liveQuality]) return v.url;
+    return vs.firstObject.url;
+}
+
+static BOOL DVIsAd(DVSegment *s) {
+    return s.title.length && ![s.title.lowercaseString containsString:@"live"];
+}
+
+// Looks for a player type whose playlist currently ends in real stream parts.
+- (NSURL *)findAdFreeURL:(NSString **)usedType {
+    for (NSString *pt in DVPlayerTypes()) {
+        if (self.cancelled) return nil;
+        [self progress:[NSString stringWithFormat:@"Skipping ads… (trying %@)", pt] fraction:-1];
+        NSURL *u = [self liveURLForPlayerType:pt];
+        if (!u) continue;
+        DVMediaPlaylist *pl = [DVTwitch mediaPlaylistSync:u error:nil];
+        DVSegment *last = pl.segments.lastObject;
+        if (last && !DVIsAd(last)) { *usedType = pt; return u; }
+    }
+    return nil;
+}
+
 - (void)runLive:(NSURL *)url max:(double)maxDur name:(NSString *)name {
     [self progress:@"Starting recording…" fraction:-1];
     NSInteger lastSeq = -1;
     double recorded = 0;
-    int fails = 0;
+    int fails = 0, adPolls = 0, segFails = 0, adsSkipped = 0;
+    NSString *lastErr = nil, *playerType = @"site";
+    NSMutableSet *triedSwitch = [NSMutableSet set];
     BOOL opened = NO, wroteMap = NO;
 
     while (!self.cancelled) {
@@ -168,8 +225,8 @@ static NSString *DVSize(unsigned long long b) {
         DVMediaPlaylist *pl = [DVTwitch mediaPlaylistSync:url error:&e];
         if (!pl) {
             fails++;
-            if (fails % 3 == 0 && self.refreshLiveURL) {
-                NSURL *fresh = self.refreshLiveURL();
+            if (fails % 3 == 0) {
+                NSURL *fresh = [self liveURLForPlayerType:playerType];
                 if (!fresh) break; // stream went offline
                 url = fresh;
             }
@@ -188,25 +245,45 @@ static NSString *DVSize(unsigned long long b) {
             if (init) { [self write:init]; wroteMap = YES; }
         }
 
+        BOOL sawAd = NO, sawLive = NO;
         for (DVSegment *s in pl.segments) {
             if (self.cancelled) break;
             if (s.seq <= lastSeq) continue;
             lastSeq = s.seq;
-            // Real stream parts are titled "live"; anything else is a stitched ad.
-            if (s.title.length && ![s.title.lowercaseString containsString:@"live"]) continue;
+            if (DVIsAd(s)) { sawAd = YES; adsSkipped++; continue; }
+            sawLive = YES;
             NSData *d = [self getSegment:s];
-            if (!d) continue;
+            if (!d) { segFails++; lastErr = @"segment download failed"; continue; }
             [self write:d];
             recorded += s.duration;
             if (maxDur > 0 && recorded >= maxDur) break;
         }
 
+        // Stuck behind ads → hop to a player type that serves the live stream.
+        adPolls = (sawAd && !sawLive) ? adPolls + 1 : 0;
+        if (adPolls >= 2 && ![triedSwitch containsObject:playerType]) {
+            [triedSwitch addObject:playerType];
+            NSString *pt = nil;
+            NSURL *clean = [self findAdFreeURL:&pt];
+            if (clean) {
+                url = clean;
+                playerType = pt;
+                if (recorded == 0) lastSeq = -1;
+            }
+            adPolls = 0;
+            continue;
+        }
+
+        NSString *extra = @"";
+        if (adPolls > 0) extra = @"\nSkipping ads…";
+        else if (segFails > 0 && recorded == 0) extra = [NSString stringWithFormat:@"\n(%d parts failed: %@)", segFails, lastErr];
+
         if (maxDur > 0) {
-            [self progress:[NSString stringWithFormat:@"Recording… %@ of %@  •  %@", DVFormatTime(recorded), DVFormatTime(maxDur), DVSize(self.bytes)]
+            [self progress:[NSString stringWithFormat:@"Recording… %@ of %@  •  %@%@", DVFormatTime(recorded), DVFormatTime(maxDur), DVSize(self.bytes), extra]
                   fraction:MIN(1.0, recorded / maxDur)];
             if (recorded >= maxDur) break;
         } else {
-            [self progress:[NSString stringWithFormat:@"Recording until end… %@  •  %@", DVFormatTime(recorded), DVSize(self.bytes)]
+            [self progress:[NSString stringWithFormat:@"Recording until end… %@  •  %@%@", DVFormatTime(recorded), DVSize(self.bytes), extra]
                   fraction:-1];
         }
         if (pl.ended) break;
@@ -214,6 +291,11 @@ static NSString *DVSize(unsigned long long b) {
     }
 
     if (!opened) return [self finish:DVError(@"Couldn't reach the stream")];
+    if (recorded == 0) {
+        NSString *why = adsSkipped ? @"Only ads were received, nothing from the stream yet. Try again in a minute."
+                                   : [NSString stringWithFormat:@"Nothing was recorded (%d parts failed)", segFails];
+        return [self finish:DVError(why)];
+    }
     [self finish:nil]; // cancelling a live recording keeps what was recorded
 }
 
