@@ -19,6 +19,8 @@ static const int kAACRates[] = {96000, 88200, 64000, 48000, 44100, 32000, 24000,
     int pmtPID, videoPID, audioPID;
     BOOL hevc;
     NSMutableData *vPES, *aPES;
+    NSMutableData *vAU;      // access unit being assembled (may span several PES packets)
+    int64_t vAUpts, vAUdts;
 
     // scan results
     NSData *sps, *pps;
@@ -185,6 +187,11 @@ static void DVAudioPES(DVRemuxState *s, const uint8_t *p, size_t len, int64_t pt
     }
 }
 
+static void DVFlushAU(DVRemuxState *s) {
+    if (s->vAU.length && s->vAUpts >= 0) DVVideoAU(s, s->vAU.bytes, s->vAU.length, s->vAUpts, s->vAUdts);
+    s->vAU.length = 0;
+}
+
 static void DVFlushPES(DVRemuxState *s, NSMutableData *pes, BOOL video) {
     if (pes.length < 9) { pes.length = 0; return; }
     const uint8_t *b = pes.bytes;
@@ -196,11 +203,18 @@ static void DVFlushPES(DVRemuxState *s, NSMutableData *pes, BOOL video) {
     if ((flags & 0x80) && hlen >= 5) pts = DVReadTS(b + 9);
     if ((flags & 0x40) && hlen >= 10) dts = DVReadTS(b + 14);
     if (dts < 0) dts = pts;
-    if (pts >= 0) {
-        const uint8_t *es = b + 9 + hlen;
-        size_t elen = pes.length - 9 - hlen;
-        if (video) DVVideoAU(s, es, elen, pts, dts);
-        else DVAudioPES(s, es, elen, pts);
+    const uint8_t *es = b + 9 + hlen;
+    size_t elen = pes.length - 9 - hlen;
+    if (video) {
+        // A frame can be split over several PES packets; only the first carries timestamps.
+        if (pts >= 0) {
+            DVFlushAU(s);
+            s->vAUpts = pts;
+            s->vAUdts = dts;
+        }
+        if (s->vAUpts >= 0) [s->vAU appendBytes:es length:elen];
+    } else if (pts >= 0) {
+        DVAudioPES(s, es, elen, pts);
     }
     pes.length = 0;
 }
@@ -262,6 +276,8 @@ static BOOL DVRunPass(DVRemuxState *s, NSURL *src, unsigned long long limit) {
     if (!fh) return NO;
     s->vPES = [NSMutableData data];
     s->aPES = [NSMutableData data];
+    s->vAU = [NSMutableData data];
+    s->vAUpts = s->vAUdts = -1;
     unsigned long long readTotal = 0;
     NSMutableData *carry = [NSMutableData data];
     while (1) {
@@ -285,6 +301,7 @@ static BOOL DVRunPass(DVRemuxState *s, NSURL *src, unsigned long long limit) {
     }
     [fh closeFile];
     DVFlushPES(s, s->vPES, YES);
+    DVFlushAU(s);
     DVFlushPES(s, s->aPES, NO);
     return YES;
 }
